@@ -52,7 +52,14 @@ export const AccessLog = sequelize.define("AccessLog", {
   timestamp: { type: DataTypes.DATE, defaultValue: Sequelize.NOW },
 }, { tableName: "AccessLogs", schema: "public", timestamps: false });
 
-await sequelize.sync();
-console.log("✅ DB synced");
+(async () => {
+  try {
+    await sequelize.authenticate();
+    console.log("✅ Connected to database");
+    await sequelize.sync({ alter: true }); // creates tables if they don't exist
+  } catch (err) {
+    console.error("❌ Database connection failed", err);
+  }
+})();
 
 export default sequelize;
