@@ -18,6 +18,8 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20*
 
 /* ===== Routes ===== */
 app.use("/api/auth", authRoutes);
+console.log('DATABASE_URL:', process.env.DATABASE_URL);
+
 
 /* ===== Upload Route ===== */
 app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
