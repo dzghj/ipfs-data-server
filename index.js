@@ -1,6 +1,9 @@
 import express from "express";
 import cors from "cors";
 import bodyParser from "body-parser";
+import express from "express";
+import cors from "cors";
+import bodyParser from "body-parser";
 import multer from "multer";
 import dotenv from "dotenv";
 
@@ -9,22 +12,29 @@ import { sequelize, FileRecord } from "./db.js";
 import { secureUpload } from "./secure-share/index.js";
 
 dotenv.config();
+
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
 /* ===== Multer Memory ===== */
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20*1024*1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }
+});
 
 /* ===== Routes ===== */
 app.use("/api/auth", authRoutes);
-console.log('DATABASE_URL:', process.env.DATABASE_URL);
 
+console.log("NODE_ENV:", process.env.NODE_ENV);
+console.log("DATABASE_URL loaded:", !!process.env.DATABASE_URL);
 
 /* ===== Upload Route ===== */
 app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
 
     const result = await secureUpload({
       buffer: req.file.buffer,
@@ -42,7 +52,14 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       uploadedAt: new Date(),
     });
 
-    res.json({ success: true, file: { id: record.id, filename: record.filename, cid: record.cid } });
+    res.json({
+      success: true,
+      file: {
+        id: record.id,
+        filename: record.filename,
+        cid: record.cid
+      }
+    });
 
   } catch (err) {
     console.error("Upload failed:", err);
@@ -52,8 +69,25 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
 
 /* ===== Boot Server ===== */
 const PORT = process.env.PORT || 4000;
+
 (async () => {
-  await sequelize.authenticate();
-  await sequelize.sync();
-  app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+  try {
+    await sequelize.authenticate();
+    console.log("✅ Connected to database");
+
+    // 🔐 IMPORTANT: never auto-sync in production
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🛠 Running sequelize.sync() (dev only)");
+      await sequelize.sync();
+    } else {
+      console.log("🚫 Skipping sequelize.sync() in production");
+    }
+
+    app.listen(PORT, () =>
+      console.log(`✅ Server running on port ${PORT}`)
+    );
+  } catch (err) {
+    console.error("❌ Server startup failed:", err);
+    process.exit(1);
+  }
 })();
