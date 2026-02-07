@@ -25,6 +25,15 @@ app.use("/api/auth", authRoutes);
 
 console.log("NODE_ENV:", process.env.NODE_ENV);
 console.log("DATABASE_URL loaded:", !!process.env.DATABASE_URL);
+/* ===== health check ===== */
+app.get("/health", (req, res) => {
+  res.json({
+    status: "ok",
+    uptime: process.uptime(),
+    env: process.env.NODE_ENV
+  });
+});
+
 
 /* ===== Upload Route ===== */
 app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
