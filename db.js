@@ -16,7 +16,7 @@ export const User = sequelize.define("User", {
   keyholderEmail: { type: DataTypes.STRING, allowNull: true },
   resetToken: { type: DataTypes.TEXT, allowNull: true },
   resetTokenExpiry: { type: DataTypes.BIGINT, allowNull: true },
-}, { tableName: "Users", schema: "public", timestamps: false });
+}, { tableName: "Users", schema: "public", timestamps: true });
 
 export const Keyholder = sequelize.define("Keyholder", {
   email: { type: DataTypes.STRING, allowNull: false, unique: true },
@@ -24,7 +24,7 @@ export const Keyholder = sequelize.define("Keyholder", {
   assignedUserId: { type: DataTypes.INTEGER, allowNull: true },
   canAccessFiles: { type: DataTypes.BOOLEAN, defaultValue: true },
   publicKey: { type: DataTypes.TEXT, allowNull: true },
-}, { tableName: "Keyholders", schema: "public", timestamps: false });
+}, { tableName: "Keyholders", schema: "public", timestamps: true });
 
 export const FileRecord = sequelize.define("FileRecord", {
   userId: { type: DataTypes.INTEGER, allowNull: false },
@@ -33,14 +33,13 @@ export const FileRecord = sequelize.define("FileRecord", {
   sha256Hash: { type: DataTypes.STRING, allowNull: true },
   encryptionKey: { type: DataTypes.TEXT, allowNull: true },
   uploadedAt: { type: DataTypes.DATE, defaultValue: Sequelize.NOW },
-}, { tableName: "FileRecords", schema: "public", timestamps: false });
+}, { tableName: "FileRecords", schema: "public", timestamps: true });
 
 export const SharedKey = sequelize.define("SharedKey", {
   fileId: { type: DataTypes.INTEGER, allowNull: false },
   keyholderId: { type: DataTypes.INTEGER, allowNull: false },
   encryptedKey: { type: DataTypes.TEXT, allowNull: false },
-  createdAt: { type: DataTypes.DATE, defaultValue: Sequelize.NOW },
-}, { tableName: "SharedKeys", schema: "public", timestamps: false });
+}, { tableName: "SharedKeys", schema: "public", timestamps: true });
 
 export const AccessLog = sequelize.define("AccessLog", {
   actorEmail: { type: DataTypes.STRING, allowNull: true },
@@ -50,7 +49,7 @@ export const AccessLog = sequelize.define("AccessLog", {
   ipAddress: { type: DataTypes.STRING, allowNull: true },
   note: { type: DataTypes.TEXT, allowNull: true },
   timestamp: { type: DataTypes.DATE, defaultValue: Sequelize.NOW },
-}, { tableName: "AccessLogs", schema: "public", timestamps: false });
+}, { tableName: "AccessLogs", schema: "public", timestamps: true });
 
 (async () => {
   try {
