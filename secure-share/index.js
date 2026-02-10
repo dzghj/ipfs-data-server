@@ -11,7 +11,10 @@ export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
 
   // Upload to IPFS
   const upload = await ipfs.add(encrypted);
+ 
   const cid = upload.cid.toString();
+  // pin 
+  await ipfs.pin.add(upload.cid);
 
   // Save audit log
   await AccessLog.create({ actorEmail: ownerId.toString(), role: "user", action: "UPLOAD", note: filename });
