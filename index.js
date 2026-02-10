@@ -73,6 +73,21 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
   }
 });
 
+/* ===== My Files ===== */
+app.get("/api/myfiles", auth, async (req, res) => {
+  try {
+    const files = await FileRecord.findAll({
+      where: { userId: req.user.id },
+      order: [["uploadedAt", "DESC"]],
+      attributes: ["id", "filename", "cid", "uploadedAt"]
+    });
+
+    res.json({ success: true, files });
+  } catch (err) {
+    console.error("Fetch files failed:", err);
+    res.status(500).json({ message: "Failed to fetch files" });
+  }
+});
 /* ===== Boot Server ===== */
 const PORT = process.env.PORT || 4000;
 
