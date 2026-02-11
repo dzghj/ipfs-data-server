@@ -7,6 +7,8 @@ import dotenv from "dotenv";
 import authRoutes, { auth } from "./auth.js";
 import { sequelize, FileRecord } from "./db.js";
 import { secureUpload } from "./secure-share/index.js";
+import fetch from "node-fetch"; // only if Node <20
+
 
 dotenv.config();
 
@@ -104,9 +106,18 @@ const PORT = process.env.PORT || 4000;
       console.log("🚫 Skipping sequelize.sync() in production");
     }
 
-    app.listen(PORT, () =>
-      console.log(`✅ Server running on port ${PORT}`)
-    );
+    app.listen(PORT, async () => {
+  console.log(`✅ Server running on port ${PORT}`);
+
+  // 🔹 Test VM /whoami endpoint
+  try {
+    const res = await fetch("http://34.70.135.218:8080/whoami");
+    const ip = await res.text();
+    console.log("🌐 Render backend public IP hitting VM:", ip);
+  } catch (err) {
+    console.error("❌ Could not connect to VM /whoami:", err);
+  }
+});
   } catch (err) {
     console.error("❌ Server startup failed:", err);
     process.exit(1);
