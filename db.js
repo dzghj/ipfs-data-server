@@ -124,53 +124,21 @@ export const Keyholder = sequelize.define(
 export const FileRecord = sequelize.define(
   "FileRecord",
   {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true,
-    },
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId: { type: DataTypes.INTEGER, allowNull: false },
+    filename: { type: DataTypes.STRING, allowNull: false },
+    cid: { type: DataTypes.STRING, allowNull: false },
+    sha256Hash: { type: DataTypes.STRING, allowNull: true },
 
-    userId: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
+    // 🔐 NEW FIELDS FOR ENCRYPTED FILES
+    encryptionKey: { type: DataTypes.TEXT, allowNull: true },
+    iv: { type: DataTypes.TEXT, allowNull: true },
+    authTag: { type: DataTypes.TEXT, allowNull: true },
+    mimeType: { type: DataTypes.STRING, allowNull: true },
 
-    filename: {
-      type: DataTypes.STRING,
-      allowNull: false,
-    },
-
-    cid: {
-      type: DataTypes.STRING,
-      allowNull: false,
-    },
-
-    sha256Hash: {
-      type: DataTypes.STRING,
-      allowNull: true,
-    },
-
-    encryptionKey: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-
-    uploadedAt: {
-      type: DataTypes.DATE,
-      defaultValue: Sequelize.NOW,
-    },
-
-    createdAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: Sequelize.NOW,
-    },
-
-    updatedAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: Sequelize.NOW,
-    },
+    uploadedAt: { type: DataTypes.DATE, defaultValue: Sequelize.NOW },
+    createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
+    updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
   },
   {
     tableName: "FileRecords",
@@ -178,6 +146,7 @@ export const FileRecord = sequelize.define(
     timestamps: false,
   }
 );
+
 
 export const SharedKey = sequelize.define(
   "SharedKey",
@@ -291,8 +260,10 @@ export const AccessLog = sequelize.define(
     console.log("✅ Connected to database");
 
     // 🚫 Do NOT use alter:true on Render prod DB
-    await sequelize.sync();
-
+   // await sequelize.sync();
+if (process.env.NODE_ENV !== "production") {
+  await sequelize.sync();
+}
     console.log("✅ Models synced");
   } catch (err) {
     console.error("❌ Database connection failed", err);

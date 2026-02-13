@@ -44,16 +44,34 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
+    const allowedMimeTypes = [
+      "application/pdf",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "image/png",
+      "image/jpeg",
+      "image/jpg",
+      "image/gif",
+      "text/plain"
+    ];
+
+    if (!allowedMimeTypes.includes(req.file.mimetype)) {
+      return res.status(400).json({ message: "Unsupported file type" });
+    }
+
+    // Optional: sanitize filename
+    const safeFilename = req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+
     const result = await secureUpload({
       buffer: req.file.buffer,
-      filename: req.file.originalname,
+      filename: safeFilename,
       ownerId: req.user.id,
       mimeType: req.file.mimetype,
     });
 
     const record = await FileRecord.create({
       userId: req.user.id,
-      filename: req.file.originalname,
+      filename: safeFilename,
       cid: result.cid,
       sha256Hash: result.sha256Hash,
       encryptionKey: result.encryptedFileKey,
