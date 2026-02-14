@@ -104,50 +104,68 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
 
 app.get("/api/file/:id/view", auth, async (req, res) => {
   try {
-    const file = await FileRecord.findOne({
-      where: { id: req.params.id, userId: req.user.id }
+    const result = await secureView({
+      fileId: req.params.id,
+      user: req.user
     });
 
-    if (!file) return res.status(404).json({ message: "File not found" });
-
-    // ⬇️ Download encrypted file from IPFS
-    const chunks = [];
-    for await (const chunk of ipfs.cat(file.cid)) chunks.push(chunk);
-    const encryptedBuffer = Buffer.concat(chunks);
-
-    // 🔑 Convert stored values to buffers
-    const key = Buffer.from(file.encryptionKey, "base64");
-    const iv = Buffer.from(file.iv, "hex");
-    const authTag = Buffer.from(file.authTag, "hex");
-   
-
-    // 🔓 Decrypt
-    const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
-
-    // 🔐 Log access
-    await AccessLog.create({
-      actorEmail: req.user.email,
-      role: "User",
-      action: "VIEW_FILE",
-      fileId: file.id,
-      ipAddress: req.ip,
-      note: "File viewed"
-    });
-
-    // 📤 Send file inline (any type)
-    res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
+    res.setHeader("Content-Type", result.mimeType);
     res.setHeader(
       "Content-Disposition",
-      `inline; filename="${file.filename}"`
+      `inline; filename="${result.filename}"`
     );
 
-    res.send(decryptedBuffer);
+    res.send(result.buffer);
 
   } catch (err) {
     console.error("View file failed:", err);
-    res.status(500).json({ message: "View failed" });
+    res.status(500).json({ message: err.message || "View failed" });
   }
 });
+
+/* ===== Secure View ===== */
+export async function secureView({ fileId, user }) {
+  // 1️⃣ Find file (ownership enforced)
+  const file = await FileRecord.findOne({
+    where: { id: fileId, userId: user.id }
+  });
+
+  if (!file) {
+    throw new Error("File not found");
+  }
+
+  // 2️⃣ Download encrypted file from IPFS
+  const chunks = [];
+  for await (const chunk of ipfs.cat(file.cid)) {
+    chunks.push(chunk);
+  }
+  const encryptedBuffer = Buffer.concat(chunks);
+
+  // 3️⃣ Convert stored crypto values
+  const key = Buffer.from(file.encryptionKey, "base64");
+  const iv = Buffer.from(file.iv, "hex");
+  const authTag = Buffer.from(file.authTag, "hex");
+
+  // 4️⃣ Decrypt
+  const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
+
+  // 5️⃣ Log access
+  await AccessLog.create({
+    actorEmail: user.email,
+    role: "User",
+    action: "VIEW_FILE",
+    fileId: file.id,
+    ipAddress: null,
+    note: "File viewed"
+  });
+
+  return {
+    buffer: decryptedBuffer,
+    mimeType: file.mimeType || "application/octet-stream",
+    filename: file.filename
+  };
+}
+
 
 /* ===== My Files ===== */
 app.get("/api/myfiles", auth, async (req, res) => {
