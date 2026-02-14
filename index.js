@@ -7,6 +7,8 @@ import dotenv from "dotenv";
 import authRoutes, { auth } from "./auth.js";
 import { sequelize, FileRecord } from "./db.js";
 import { secureUpload } from "./secure-share/index.js";
+import { ipfs } from "./secure-share/ipfs-client.js";
+
 import fetch from "node-fetch"; // only if Node <20
 
 
