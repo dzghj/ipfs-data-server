@@ -25,6 +25,9 @@ export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
     encryptedFileKey: fileKey.toString("base64"),
     iv: iv.toString("hex"),
     authTag: authTag.toString("hex"),
+    filename,
+    ownerId,
+   mimeType,
   };
 }
 

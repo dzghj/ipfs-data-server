@@ -75,6 +75,9 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       cid: result.cid,
       sha256Hash: result.sha256Hash,
       encryptionKey: result.encryptedFileKey,
+      iv: result.iv, // hex string    
+      authTag: result.authTag, // hex string   
+      mimeType: req.file.mimetype,
       uploadedAt: new Date(),
     });
 
@@ -90,6 +93,53 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
   } catch (err) {
     console.error("Upload failed:", err);
     res.status(500).json({ message: "Upload failed" });
+  }
+});
+/* ===== view Route ===== */
+
+app.get("/api/file/:id/view", auth, async (req, res) => {
+  try {
+    const file = await FileRecord.findOne({
+      where: { id: req.params.id, userId: req.user.id }
+    });
+
+    if (!file) return res.status(404).json({ message: "File not found" });
+
+    // ⬇️ Download encrypted file from IPFS
+    const chunks = [];
+    for await (const chunk of ipfs.cat(file.cid)) chunks.push(chunk);
+    const encryptedBuffer = Buffer.concat(chunks);
+
+    // 🔑 Convert stored values to buffers
+    const key = Buffer.from(file.encryptionKey, "hex");
+    const iv = Buffer.from(file.iv, "hex");
+    const authTag = Buffer.from(file.authTag, "hex");
+
+    // 🔓 Decrypt
+    const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
+
+    // 🔐 Log access
+    await AccessLog.create({
+      actorEmail: req.user.email,
+      role: "User",
+      action: "VIEW_FILE",
+      fileId: file.id,
+      ipAddress: req.ip,
+      note: "File viewed"
+    });
+
+    // 📤 Send file inline (any type)
+    res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${file.filename}"`
+    );
+
+    res.send(decryptedBuffer);
+
+  } catch (err) {
+    console.error("View file failed:", err);
+    res.status(500).json({ message: "View failed" });
   }
 });
 
