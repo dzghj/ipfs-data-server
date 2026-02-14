@@ -6,13 +6,8 @@ import dotenv from "dotenv";
 
 import authRoutes, { auth } from "./auth.js";
 import { sequelize, FileRecord } from "./db.js";
-import { secureUpload } from "./secure-share/index.js";
-import { ipfs } from "./secure-share/ipfs-client.js";
-import { decrypt } from "./secure-share/crypto-utils.js";
+import { secureUpload,secureView } from "./secure-share/index.js";
 
-
-
-import fetch from "node-fetch"; // only if Node <20
 
 
 dotenv.config();
@@ -122,49 +117,6 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
     res.status(500).json({ message: err.message || "View failed" });
   }
 });
-
-/* ===== Secure View ===== */
-export async function secureView({ fileId, user }) {
-  // 1️⃣ Find file (ownership enforced)
-  const file = await FileRecord.findOne({
-    where: { id: fileId, userId: user.id }
-  });
-
-  if (!file) {
-    throw new Error("File not found");
-  }
-
-  // 2️⃣ Download encrypted file from IPFS
-  const chunks = [];
-  for await (const chunk of ipfs.cat(file.cid)) {
-    chunks.push(chunk);
-  }
-  const encryptedBuffer = Buffer.concat(chunks);
-
-  // 3️⃣ Convert stored crypto values
-  const key = Buffer.from(file.encryptionKey, "base64");
-  const iv = Buffer.from(file.iv, "hex");
-  const authTag = Buffer.from(file.authTag, "hex");
-
-  // 4️⃣ Decrypt
-  const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
-
-  // 5️⃣ Log access
-  await AccessLog.create({
-    actorEmail: user.email,
-    role: "User",
-    action: "VIEW_FILE",
-    fileId: file.id,
-    ipAddress: null,
-    note: "File viewed"
-  });
-
-  return {
-    buffer: decryptedBuffer,
-    mimeType: file.mimeType || "application/octet-stream",
-    filename: file.filename
-  };
-}
 
 
 /* ===== My Files ===== */
