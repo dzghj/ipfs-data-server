@@ -8,6 +8,9 @@ import authRoutes, { auth } from "./auth.js";
 import { sequelize, FileRecord } from "./db.js";
 import { secureUpload } from "./secure-share/index.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
+import { decrypt } from "./secure-share/crypto-Utils.js";
+
+
 
 import fetch from "node-fetch"; // only if Node <20
 
@@ -116,10 +119,7 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
     const key = Buffer.from(file.encryptionKey, "base64");
     const iv = Buffer.from(file.iv, "hex");
     const authTag = Buffer.from(file.authTag, "hex");
-    console.log("Key length:", key.length);
-console.log("IV length:", iv.length);
-console.log("AuthTag length:", authTag.length);
-
+   
 
     // 🔓 Decrypt
     const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
