@@ -111,9 +111,13 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
     const encryptedBuffer = Buffer.concat(chunks);
 
     // 🔑 Convert stored values to buffers
-    const key = Buffer.from(file.encryptionKey, "hex");
+    const key = Buffer.from(file.encryptionKey, "base64");
     const iv = Buffer.from(file.iv, "hex");
     const authTag = Buffer.from(file.authTag, "hex");
+    console.log("Key length:", key.length);
+console.log("IV length:", iv.length);
+console.log("AuthTag length:", authTag.length);
+
 
     // 🔓 Decrypt
     const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
