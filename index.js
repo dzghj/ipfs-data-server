@@ -8,7 +8,7 @@ import authRoutes, { auth } from "./auth.js";
 import { sequelize, FileRecord } from "./db.js";
 import { secureUpload } from "./secure-share/index.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
-import { decrypt } from "./secure-share/crypto-Utils.js";
+import { decrypt } from "./secure-share/crypto-utils.js";
 
 
 
