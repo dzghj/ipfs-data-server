@@ -2,6 +2,8 @@ import { ipfs } from "./ipfs-client.js";
 import { generateKey, encrypt, decrypt, sha256 } from "./crypto-utils.js";
 import { encryptForUser } from "./user-keys.js";
 import { SharedKey, FileRecord, AccessLog } from "../db.js";
+import crypto from "crypto";
+
 
 /* ===== Secure Upload ===== */
 export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
@@ -32,7 +34,6 @@ export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
 }
 /* ===== Secure View ===== */
 export async function secureView({ fileId, user }) {
-  // 1️⃣ Find file (ownership enforced)
   const file = await FileRecord.findOne({
     where: { id: fileId, userId: user.id }
   });
@@ -41,35 +42,46 @@ export async function secureView({ fileId, user }) {
     throw new Error("File not found");
   }
 
-  // 2️⃣ Download encrypted file from IPFS
   const chunks = [];
   for await (const chunk of ipfs.cat(file.cid)) {
     chunks.push(chunk);
   }
   const encryptedBuffer = Buffer.concat(chunks);
 
-  // 3️⃣ Convert stored crypto values
   const key = Buffer.from(file.encryptionKey, "base64");
   const iv = Buffer.from(file.iv, "hex");
   const authTag = Buffer.from(file.authTag, "hex");
 
-  // 4️⃣ Decrypt
   const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
 
-  // 5️⃣ Log access
+  const recalculatedHash = crypto
+    .createHash("sha256")
+    .update(decryptedBuffer)
+    .digest("hex");
+
+  let integrityVerified = true;
+  let integrityNote = "Integrity verified";
+
+  if (recalculatedHash !== file.sha256Hash) {
+    integrityVerified = false;
+    integrityNote = "WARNING: SHA256 hash mismatch detected";
+  }
+
   await AccessLog.create({
     actorEmail: user.email,
     role: "User",
-    action: "VIEW_FILE",
+    action:  "VIEW_FILE",
     fileId: file.id,
     ipAddress: null,
-    note: "File viewed"
+    note: integrityNote
   });
 
   return {
     buffer: decryptedBuffer,
     mimeType: file.mimeType || "application/octet-stream",
-    filename: file.filename
+    filename: file.filename,
+    sha256Hash: recalculatedHash,
+    integrityVerified
   };
 }
 

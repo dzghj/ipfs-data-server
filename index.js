@@ -104,6 +104,8 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
       user: req.user
     });
 
+     // 🔹 Set integrity header
+     res.setHeader("X-Integrity-Verified", result.integrityVerified ? "true" : "false");
     res.setHeader("Content-Type", result.mimeType);
     res.setHeader(
       "Content-Disposition",
