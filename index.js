@@ -120,6 +120,10 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
   }
 });
 
+app.use((req, res, next) => {
+  console.log(`🌍 ${req.method} ${req.originalUrl}`);
+  next();
+});
 
 /* ===== My Files ===== */
 app.get("/api/myfiles", auth, async (req, res) => {

@@ -44,10 +44,6 @@ router.post("/login", async (req, res) => {
 
 /* ===== Forgot Password ===== */
 /* ===== Forgot Password ===== */
-app.use((req, res, next) => {
-  console.log(`🌍 ${req.method} ${req.originalUrl}`);
-  next();
-});
 
 router.post("/forgot-password", async (req, res) => {
   console.log("🔵 Forgot password endpoint hit");
