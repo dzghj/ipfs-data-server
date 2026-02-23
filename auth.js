@@ -43,22 +43,15 @@ router.post("/login", async (req, res) => {
 });
 
 /* ===== Forgot Password ===== */
-/* ===== Forgot Password ===== */
-
 router.post("/forgot-password", async (req, res) => {
-  console.log("🔵 Forgot password endpoint hit");
-
   try {
     const { email } = req.body;
-    console.log("📩 Email received:", email);
 
     if (!email) {
-      console.log("❌ No email provided in body");
       return res.status(400).json({ message: "Email required" });
     }
 
     const user = await User.findOne({ where: { email } });
-    console.log("👤 User lookup result:", user ? "FOUND" : "NOT FOUND");
 
     if (!user) {
       return res.status(404).json({ message: "No user found" });
@@ -67,31 +60,12 @@ router.post("/forgot-password", async (req, res) => {
     const resetToken = crypto.randomBytes(32).toString("hex");
     const expiry = Date.now() + 15 * 60 * 1000;
 
-    console.log("🔑 Generated reset token:", resetToken);
-
     user.resetToken = resetToken;
     user.resetTokenExpiry = expiry;
     await user.save();
 
-    console.log("💾 Reset token saved to DB");
-
-    if (!process.env.CLIENT_URL) {
-      console.error("❌ CLIENT_URL not defined in env");
-    }
-
-    if (!process.env.RESEND_FROM_EMAIL) {
-      console.error("❌ RESEND_FROM_EMAIL not defined in env");
-    }
-
-    if (!process.env.RESEND_API_KEY) {
-      console.error("❌ RESEND_API_KEY not defined in env");
-    }
-
-    const clientUrl = process.env.CLIENT_URL?.replace(/\/$/, "");
+    const clientUrl = process.env.CLIENT_URL.replace(/\/$/, "");
     const resetLink = `${clientUrl}/reset-password/${resetToken}`;
-
-    console.log("🔗 Reset link:", resetLink);
-    console.log("📤 Sending email from:", process.env.RESEND_FROM_EMAIL);
 
     const emailResponse = await resend.emails.send({
       from: process.env.RESEND_FROM_EMAIL,
@@ -100,21 +74,18 @@ router.post("/forgot-password", async (req, res) => {
       html: `<p>Reset <a href="${resetLink}">here</a></p>`,
     });
 
-    console.log("✅ Email sent successfully:", emailResponse);
+    if (emailResponse.error) {
+      return res.status(500).json({
+        message: "Failed to send reset email",
+        error: emailResponse.error.message,
+      });
+    }
 
     res.json({ message: "Reset email sent" });
 
   } catch (err) {
-    console.error("🔥 Forgot password error:");
-    console.error(err);
-
-    if (err.response) {
-      console.error("📡 Resend API response:", err.response);
-    }
-
     res.status(500).json({
       message: "Internal error",
-      error: err.message
     });
   }
 });
