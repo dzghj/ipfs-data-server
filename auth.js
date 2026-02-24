@@ -72,37 +72,42 @@ router.post("/set-password/:token", async (req, res) => {
     const { token } = req.params;
     const { password } = req.body;
 
-    if (!password) return res.status(400).json({ message: "Password required" });
-
-    // Find user by token
-    const user = await User.findOne({ where: { verifyToken: token } });
-    if (!user) return res.status(404).json({ message: "Invalid token" });
-
-    // Check if token expired
-    if (user.verifyTokenExpiry < Date.now()) {
-      // Token expired → delete unverified user
-      await user.destroy();
-      return res.status(410).json({ message: "Token expired. Please register again." });
+    if (!password) {
+      return res.status(400).json({ message: "Password required" });
     }
 
-    // Set password & verify user
+    const user = await User.findOne({ where: { verifyToken: token } });
+
+    if (!user) {
+      return res.status(404).json({ message: "Invalid token" });
+    }
+
+    if (!user.verifyTokenExpiry || user.verifyTokenExpiry < Date.now()) {
+      return res.status(410).json({
+        message: "Verification token expired. Please request a new one.",
+      });
+    }
+
     user.passwordHash = bcrypt.hashSync(password, 8);
     user.isVerified = true;
     user.verifyToken = null;
     user.verifyTokenExpiry = null;
+
     await user.save();
 
-    // Auto-login: generate JWT
-    const tokenJWT = jwt.sign({ id: user.id, email: user.email }, SECRET, { expiresIn: "1d" });
+    const tokenJWT = jwt.sign(
+      { id: user.id, email: user.email },
+      SECRET,
+      { expiresIn: "1d" }
+    );
 
     res.json({
       message: "Password set successfully",
       token: tokenJWT,
       user: { id: user.id, email: user.email },
     });
-
   } catch (err) {
-    console.error(err);
+    console.error("Set password error:", err);
     res.status(500).json({ message: "Internal error" });
   }
 });
@@ -112,26 +117,28 @@ router.post("/set-password/:token", async (req, res) => {
 router.post("/resend-verification", async (req, res) => {
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email required" });
+
+    if (!email) {
+      return res.status(400).json({ message: "Email required" });
+    }
 
     const user = await User.findOne({ where: { email } });
-    if (!user) return res.status(404).json({ message: "No user found" });
+
+    if (!user) {
+      return res.status(404).json({ message: "No user found" });
+    }
 
     if (user.isVerified) {
       return res.status(400).json({ message: "User already verified" });
     }
 
-    // If expired, delete old user and ask to register again
-    if (user.verifyTokenExpiry < Date.now()) {
-      await user.destroy();
-      return res.status(410).json({ message: "Verification token expired. Please register again." });
-    }
-
-    // Generate new token & expiry
+    // Always generate new token (even if expired)
     const verifyToken = crypto.randomBytes(32).toString("hex");
-    const verifyTokenExpiry = Date.now() + 24 * 60 * 60 * 1000; // 24h
+    const verifyTokenExpiry = Date.now() + 24 * 60 * 60 * 1000;
+
     user.verifyToken = verifyToken;
     user.verifyTokenExpiry = verifyTokenExpiry;
+
     await user.save();
 
     const clientUrl = process.env.CLIENT_URL.replace(/\/$/, "");
@@ -145,12 +152,48 @@ router.post("/resend-verification", async (req, res) => {
     });
 
     res.json({ message: "Verification email resent" });
-
   } catch (err) {
-    console.error(err);
+    console.error("Resend verification error:", err);
     res.status(500).json({ message: "Internal error" });
   }
 });
+
+/* ==============================
+VERIFY TOKEN (Before Set Password)
+================================ */
+router.get("/verify-token/:token", async (req, res) => {
+try {
+const { token } = req.params;
+
+if (!token) {
+return res.status(400).json({ message: "Token required" });
+}
+
+const user = await User.findOne({ where: { verifyToken: token } });
+
+if (!user) {
+return res.status(404).json({ message: "Invalid verification token" });
+}
+
+if (user.isVerified) {
+return res.status(400).json({ message: "User already verified" });
+}
+
+if (!user.verifyTokenExpiry || user.verifyTokenExpiry < Date.now()) {
+return res.status(410).json({
+message: "Verification token expired. Please request a new one.",
+});
+}
+
+// Token is valid
+res.json({ email: user.email });
+
+} catch (err) {
+console.error("Verify token error:", err);
+res.status(500).json({ message: "Internal error" });
+}
+});
+
 
 /* ==============================
    LOGIN
