@@ -25,7 +25,7 @@ router.post("/register", async (req, res) => {
     // Check if user already exists
     const existing = await User.findOne({ where: { email } });
     if (existing) {
-      if (existing.verified) {
+      if (existing.isVerified) {
         return res.status(400).json({ message: "Email already registered" });
       } else {
         // unverified user exists, maybe resend token
@@ -42,7 +42,7 @@ router.post("/register", async (req, res) => {
       email,
       verifyToken,
       verifyTokenExpiry,
-      verified: false,
+      isVerified: false,
     });
 
     // Send verification email
@@ -87,7 +87,7 @@ router.post("/set-password/:token", async (req, res) => {
 
     // Set password & verify user
     user.passwordHash = bcrypt.hashSync(password, 8);
-    user.verified = true;
+    user.isVerified = true;
     user.verifyToken = null;
     user.verifyTokenExpiry = null;
     await user.save();
@@ -117,7 +117,7 @@ router.post("/resend-verification", async (req, res) => {
     const user = await User.findOne({ where: { email } });
     if (!user) return res.status(404).json({ message: "No user found" });
 
-    if (user.verified) {
+    if (user.isVerified) {
       return res.status(400).json({ message: "User already verified" });
     }
 
