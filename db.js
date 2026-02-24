@@ -47,6 +47,20 @@ export const User = sequelize.define(
       type: DataTypes.BIGINT,
       allowNull: true,
     },
+    verifyToken: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+  
+    verifyTokenExpiry: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+    },
+  
+    isVerified: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
 
     createdAt: {
       type: DataTypes.DATE,
