@@ -30,7 +30,7 @@ export const User = sequelize.define(
 
     passwordHash: {
       type: DataTypes.STRING,
-      allowNull: false,
+      allowNull: true,
     },
 
     keyholderEmail: {
