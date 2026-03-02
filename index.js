@@ -103,7 +103,12 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
       fileId: req.params.id,
       user: req.user
     });
-
+    console.log("secureView completed");
+    console.log("Integrity Verified:", result.integrityVerified);
+    console.log("Returned SHA256:", result.sha256Hash);
+    console.log("Filename:", result.filename);
+    console.log("MimeType:", result.mimeType);
+    console.log("Buffer size:", result.buffer?.length);
      // 🔹 Set integrity header
      res.setHeader("X-Integrity-Verified", result.integrityVerified ? "true" : "false");
     res.setHeader("Content-Type", result.mimeType);
