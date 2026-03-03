@@ -101,33 +101,30 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
   try {
     const result = await secureView({
       fileId: req.params.id,
-      user: req.user
+      user: req.user,
     });
-    console.log("secureView completed");
-    console.log("Integrity Verified:", result.integrityVerified);
-    console.log("Returned SHA256:", result.sha256Hash);
-    console.log("Filename:", result.filename);
-    console.log("MimeType:", result.mimeType);
-    console.log("Buffer size:", result.buffer?.length);
-     // 🔹 Set integrity header
-     res.setHeader("X-Integrity-Verified", result.integrityVerified ? "true" : "false");
-    res.setHeader("Content-Type", result.mimeType);
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="${result.filename}"`
-    );
 
-    res.send(result.buffer);
+    if (!result || !result.buffer) {
+      return res.status(404).json({
+        message: "File not found",
+      });
+    }
+
+    res.status(200).json({
+      integrityVerified: Boolean(result.integrityVerified),
+      filename: result.filename,
+      mimeType: result.mimeType,
+      size: result.buffer.length,
+      data: result.buffer.toString("base64"),
+    });
 
   } catch (err) {
     console.error("View file failed:", err);
-    res.status(500).json({ message: err.message || "View failed" });
-  }
-});
 
-app.use((req, res, next) => {
-  console.log(`🌍 ${req.method} ${req.originalUrl}`);
-  next();
+    res.status(500).json({
+      message: err.message || "Secure view failed",
+    });
+  }
 });
 
 /* ===== My Files ===== */
