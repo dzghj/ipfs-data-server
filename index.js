@@ -142,6 +142,58 @@ app.get("/api/myfiles", auth, async (req, res) => {
     res.status(500).json({ message: "Failed to fetch files" });
   }
 });
+
+/* ===== AI Chat Route ===== */
+app.post("/api/ai/chat", auth, async (req, res) => {
+  try {
+    const { message } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: "Message is required" });
+    }
+
+    // Call OpenAI API
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are ShadowVault AI assistant. You help users with digital vault security, legal documents, risk analysis, and audit logs.",
+          },
+          {
+            role: "user",
+            content: message,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error(data);
+      return res.status(500).json({ error: "AI request failed" });
+    }
+
+    const aiText = data.choices[0].message.content;
+
+    res.json({
+      success: true,
+      response: aiText,
+    });
+
+  } catch (err) {
+    console.error("AI chat failed:", err);
+    res.status(500).json({ error: "AI chat failed" });
+  }
+});
 /* ===== Boot Server ===== */
 const PORT = process.env.PORT || 4000;
 
