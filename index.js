@@ -194,6 +194,122 @@ app.post("/api/ai/chat", auth, async (req, res) => {
     res.status(500).json({ error: "AI chat failed" });
   }
 });
+
+/* ===== AI Risk Analysis ===== */
+app.post("/api/ai/risk-analysis", auth, async (req, res) => {
+  try {
+    const vaultData = req.body;
+
+    const prompt = `
+You are a digital vault security analyst.
+
+Analyze the vault security risk based on the data below.
+
+Return:
+- Risk Score (0-100)
+- Risk Level (Low / Medium / High)
+- Issues Found
+- Recommendations
+
+Vault Data:
+${JSON.stringify(vaultData, null, 2)}
+`;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are a cybersecurity and digital vault risk analysis expert.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+
+    res.json({
+      success: true,
+      analysis: data.choices[0].message.content,
+    });
+
+  } catch (err) {
+    console.error("Risk analysis failed:", err);
+    res.status(500).json({ error: "Risk analysis failed" });
+  }
+});
+/* ===== AI Audit Log Analysis ===== */
+app.post("/api/ai/audit-analysis", auth, async (req, res) => {
+  try {
+    const { logs } = req.body;
+
+    if (!logs) {
+      return res.status(400).json({ error: "Logs required" });
+    }
+
+    const prompt = `
+You are a cybersecurity audit analyst.
+
+Analyze the audit logs below and identify:
+- Suspicious activity
+- Unusual login locations
+- Multiple failed logins
+- Unusual file access
+- Security risks
+
+Return:
+- Risk Level
+- Suspicious Events
+- Explanation
+- Recommended Actions
+
+Audit Logs:
+${JSON.stringify(logs, null, 2)}
+`;
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4.1-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are a cybersecurity audit log monitoring system.",
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      }),
+    });
+
+    const data = await response.json();
+
+    res.json({
+      success: true,
+      analysis: data.choices[0].message.content,
+    });
+
+  } catch (err) {
+    console.error("Audit analysis failed:", err);
+    res.status(500).json({ error: "Audit analysis failed" });
+  }
+});
 /* ===== Boot Server ===== */
 const PORT = process.env.PORT || 4000;
 
