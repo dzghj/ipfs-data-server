@@ -61,6 +61,20 @@ export const User = sequelize.define(
       type: DataTypes.BOOLEAN,
       defaultValue: false,
     },
+   // 📦 MAX FILE LIMIT
+   maxFileNumber: {
+    type: DataTypes.INTEGER,
+    defaultValue: 5,
+  },
+  // 🤖 AI Vault Risk (GLOBAL)
+  riskScore: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
+  riskAnalysis: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
 
     createdAt: {
       type: DataTypes.DATE,
@@ -149,6 +163,13 @@ export const FileRecord = sequelize.define(
     iv: { type: DataTypes.TEXT, allowNull: true },
     authTag: { type: DataTypes.TEXT, allowNull: true },
     mimeType: { type: DataTypes.STRING, allowNull: true },
+
+     // 🛡️ Protection / Dead Man Switch
+     protectionOn: { type: DataTypes.BOOLEAN, defaultValue: false },
+     remainingDays: { type: DataTypes.INTEGER, allowNull: true },
+ 
+     // 👥 Keyholder emails list
+     keyHolderList: { type: DataTypes.JSONB, allowNull: true },
 
     uploadedAt: { type: DataTypes.DATE, defaultValue: Sequelize.NOW },
     createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },

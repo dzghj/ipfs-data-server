@@ -225,7 +225,7 @@ router.post("/login", async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, email: user.email }
+      user: { id: user.id, email: user.email ,riskScore: data.riskScore,riskAnalysis: data.riskAnalysis}
     });
 
   } catch (err) {
