@@ -126,6 +126,41 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
     });
   }
 });
+/* ===== Toggle File Protection ===== */
+app.post("/api/file/:id/toggle-protection", auth, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const { enabled } = req.body;
+
+    const file = await FileRecord.findOne({
+      where: {
+        id: fileId,
+        userId: req.user.id, // security: only owner can change
+      },
+    });
+
+    if (!file) {
+      return res.status(404).json({
+        message: "File not found",
+      });
+    }
+
+    // Update protection flag
+    file.protectionOn = enabled;
+    await file.save();
+
+    res.json({
+      success: true,
+      protectionOn: file.protectionOn,
+    });
+
+  } catch (err) {
+    console.error("Toggle protection failed:", err);
+    res.status(500).json({
+      message: "Failed to update protection",
+    });
+  }
+});
 
 /* ===== My Files ===== */
 app.get("/api/myfiles", auth, async (req, res) => {
