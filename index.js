@@ -168,7 +168,7 @@ app.get("/api/myfiles", auth, async (req, res) => {
     const files = await FileRecord.findAll({
       where: { userId: req.user.id },
       order: [["uploadedAt", "DESC"]],
-      attributes: ["id", "filename", "cid", "uploadedAt"]
+      attributes: ["id", "filename", "cid", "uploadedAt","protectionOn"]
     });
 
     res.json({ success: true, files });
