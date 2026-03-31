@@ -12,89 +12,6 @@ export const sequelize = new Sequelize(process.env.DATABASE_URL, {
 });
 
 /* ===== Models ===== */
-
-export const User = sequelize.define(
-  "User",
-  {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true,
-    },
-
-    email: {
-      type: DataTypes.STRING,
-      allowNull: false,
-      unique: true,
-    },
-
-    passwordHash: {
-      type: DataTypes.STRING,
-      allowNull: true,
-    },
-
-    keyholderEmail: {
-      type: DataTypes.STRING,
-      allowNull: true,
-    },
-
-    resetToken: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-
-    resetTokenExpiry: {
-      type: DataTypes.BIGINT,
-      allowNull: true,
-    },
-    verifyToken: {
-      type: DataTypes.STRING,
-      allowNull: true,
-    },
-  
-    verifyTokenExpiry: {
-      type: DataTypes.BIGINT,
-      allowNull: true,
-    },
-  
-    isVerified: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false,
-    },
-   // 📦 MAX FILE LIMIT
-   maxFileNumber: {
-    type: DataTypes.INTEGER,
-    defaultValue: 5,
-  },
-  // 🤖 AI Vault Risk (GLOBAL)
-  riskScore: {
-    type: DataTypes.INTEGER,
-    allowNull: true,
-  },
-  riskAnalysis: {
-    type: DataTypes.TEXT,
-    allowNull: true,
-  },
-
-    createdAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: Sequelize.NOW,
-    },
-
-    updatedAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: Sequelize.NOW,
-    },
-  },
-  {
-    tableName: "Users",
-    schema: "public",
-    timestamps: false, // 🔴 REQUIRED
-  }
-);
-
 export const Keyholder = sequelize.define(
   "Keyholder",
   {
@@ -144,6 +61,50 @@ export const Keyholder = sequelize.define(
   },
   {
     tableName: "Keyholders",
+    schema: "public",
+    timestamps: false,
+  }
+);
+
+export const Plan = sequelize.define(
+  "Plan",
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true,
+    },
+
+    name: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      unique: true,
+    },
+
+    maxFiles: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+
+    price: {
+      type: DataTypes.FLOAT,
+      allowNull: false,
+    },
+
+    createdAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.NOW,
+    },
+
+    updatedAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.NOW,
+    },
+  },
+  {
+    tableName: "Plans",
     schema: "public",
     timestamps: false,
   }
