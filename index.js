@@ -126,6 +126,64 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
     });
   }
 });
+
+/* ===== Update KeyHolder Emails ===== */
+
+app.post("/api/file/:id/keyholders", auth, async (req, res) => {
+  try {
+    const fileId = req.params.id;
+    const { keyHolderList } = req.body;
+
+    // ✅ Validate input
+    if (!Array.isArray(keyHolderList)) {
+      return res.status(400).json({
+        message: "keyHolderList must be an array",
+      });
+    }
+
+    // Optional: limit number of emails
+    if (keyHolderList.length > 5) {
+      return res.status(400).json({
+        message: "Maximum 5 keyholders allowed",
+      });
+    }
+
+    // ✅ Find file (ensure user owns it OR is allowed)
+    const file = await FileRecord.findOne({
+      where: { id: fileId },
+    });
+
+    if (!file) {
+      return res.status(404).json({
+        message: "File not found",
+      });
+    }
+
+    // Optional security check (recommended)
+    if (file.userId && file.userId !== req.user.id) {
+      return res.status(403).json({
+        message: "Not authorized",
+      });
+    }
+
+    // ✅ Update JSONB field
+    file.keyHolderList = keyHolderList;
+    await file.save();
+
+    res.status(200).json({
+      success: true,
+      keyHolderList: file.keyHolderList,
+    });
+
+  } catch (err) {
+    console.error("Update keyholders failed:", err);
+
+    res.status(500).json({
+      message: err.message || "Failed to update keyholders",
+    });
+  }
+});
+
 /* ===== Toggle File Protection ===== */
 app.post("/api/file/:id/toggle-protection", auth, async (req, res) => {
   try {
