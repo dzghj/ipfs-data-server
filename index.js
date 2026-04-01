@@ -5,7 +5,7 @@ import multer from "multer";
 import dotenv from "dotenv";
 
 import authRoutes, { auth } from "./auth.js";
-import { sequelize, FileRecord } from "./db.js";
+import { sequelize, FileRecord,User,Plan } from "./db.js";
 import { secureUpload,secureView } from "./secure-share/index.js";
 
 
@@ -180,7 +180,7 @@ app.get("/api/myfiles", auth, async (req, res) => {
 /* ==============================
    SUBSCRIBE / UPGRADE PLAN
 ================================ */
-app.post("/api/upgrade/subscribe", async (req, res) => {
+app.post("/api/upgrade/subscribe", auth,async (req, res) => {
   try {
     const { planId } = req.body;
 
@@ -225,7 +225,7 @@ app.post("/api/upgrade/subscribe", async (req, res) => {
 /* ==============================
    GET UPGRADE PLANS
 ================================ */
-app.get("/api/upgrade/options", async (req, res) => {
+app.get("/api/upgrade/options", auth,async (req, res) => {
   try {
     const plans = await Plan.findAll({
       attributes: ["id", "name", "maxFiles", "price"],
