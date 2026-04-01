@@ -207,7 +207,8 @@ app.post("/api/upgrade/subscribe", auth,async (req, res) => {
        UPDATE USER PLAN
     ========================= */
     await User.update(
-      { maxFileNumber: plan.maxFiles },
+      { maxFileNumber: plan.maxFiles,
+        planId: plan.id },
       { where: { id: userId } }
     );
 
