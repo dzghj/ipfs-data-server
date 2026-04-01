@@ -210,7 +210,7 @@ app.post("/api/upgrade/subscribe", auth,async (req, res) => {
       { maxFileNumber: plan.maxFiles, planId: plan.id },
       { where: { id: userId } }
     );
-  console.log("Updated rows:", updated);
+  //console.log("Updated rows:", updated);
   console.log("Updated plan:", plan);
     res.json({
       success: true,
