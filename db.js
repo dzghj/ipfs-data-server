@@ -191,7 +191,7 @@ export const Plan = sequelize.define(
     },
   },
   {
-    tableName: "Plans",
+    tableName: "Plan",
     schema: "public",
     timestamps: false,
   }
