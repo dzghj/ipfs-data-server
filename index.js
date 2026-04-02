@@ -142,9 +142,9 @@ app.post("/api/file/:id/keyholders", auth, async (req, res) => {
     }
 
     // Optional: limit number of emails
-    if (keyHolderList.length > 5) {
+    if (keyHolderList.length > 3) {
       return res.status(400).json({
-        message: "Maximum 5 keyholders allowed",
+        message: "Maximum 3 keyholders allowed",
       });
     }
 
