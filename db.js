@@ -80,7 +80,14 @@ export const User = sequelize.define(
     type: DataTypes.INTEGER,
     allowNull: true,
   },
-
+  lastLogin: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  loginAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
     createdAt: {
       type: DataTypes.DATE,
       allowNull: false,

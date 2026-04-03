@@ -217,6 +217,13 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
+   const previousLogin = user.loginAt;
+
+    if (previousLogin) {
+        user.lastLogin = previousLogin;
+}
+    user.loginAt = new Date();
+    await user.save();
     const token = jwt.sign(
       { id: user.id, email: user.email },
       SECRET,
@@ -225,7 +232,7 @@ router.post("/login", async (req, res) => {
 
     res.json({
       token,
-      user: { id: user.id, email: user.email ,riskScore: user.riskScore,riskAnalysis: user.riskAnalysis ,maxFileNumber: user.maxFileNumber}
+      user: { id: user.id, email: user.email ,riskScore: user.riskScore,riskAnalysis: user.riskAnalysis ,maxFileNumber: user.maxFileNumber ,lastLogin: user.lastLogin}
     });
 
   } catch (err) {
