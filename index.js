@@ -5,7 +5,7 @@ import multer from "multer";
 import dotenv from "dotenv";
 
 import authRoutes, { auth } from "./auth.js";
-import { sequelize, FileRecord,User,Plan } from "./db.js";
+import { sequelize, FileRecord, User, Plan, Nominee } from "./db.js";
 import { secureUpload,secureView } from "./secure-share/index.js";
 
 
@@ -302,6 +302,102 @@ app.get("/api/upgrade/options", auth,async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to load upgrade plans" });
+  }
+});
+
+/* ===== Nominees CRUD ===== */
+
+// GET /api/nominees — list all nominees for the logged-in user
+app.get("/api/nominees", auth, async (req, res) => {
+  try {
+    const nominees = await Nominee.findAll({
+      where: { userId: req.user.id },
+      order: [["createdAt", "ASC"]],
+    });
+    res.json({ success: true, nominees });
+  } catch (err) {
+    console.error("Fetch nominees failed:", err);
+    res.status(500).json({ message: "Failed to fetch nominees" });
+  }
+});
+
+// POST /api/nominees — create a new nominee
+app.post("/api/nominees", auth, async (req, res) => {
+  try {
+    const { name, email, phone, relationship, accessLevel, allowedFolders } = req.body;
+
+    if (!name || !email) {
+      return res.status(400).json({ message: "Name and email are required" });
+    }
+
+    const level = accessLevel === "partial" ? "partial" : "full";
+
+    const nominee = await Nominee.create({
+      userId: req.user.id,
+      name,
+      email,
+      phone: phone || null,
+      relationship: relationship || null,
+      accessLevel: level,
+      allowedFolders: level === "partial" ? (allowedFolders || []) : [],
+    });
+
+    res.status(201).json({ success: true, nominee });
+  } catch (err) {
+    console.error("Create nominee failed:", err);
+    res.status(500).json({ message: "Failed to create nominee" });
+  }
+});
+
+// PUT /api/nominees/:id — update a nominee (access level, allowed folders, etc.)
+app.put("/api/nominees/:id", auth, async (req, res) => {
+  try {
+    const nominee = await Nominee.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+    });
+
+    if (!nominee) {
+      return res.status(404).json({ message: "Nominee not found" });
+    }
+
+    const { name, email, phone, relationship, accessLevel, allowedFolders } = req.body;
+
+    if (name !== undefined) nominee.name = name;
+    if (email !== undefined) nominee.email = email;
+    if (phone !== undefined) nominee.phone = phone;
+    if (relationship !== undefined) nominee.relationship = relationship;
+    if (accessLevel !== undefined) {
+      nominee.accessLevel = accessLevel === "partial" ? "partial" : "full";
+      nominee.allowedFolders =
+        nominee.accessLevel === "partial" ? (allowedFolders || nominee.allowedFolders || []) : [];
+    } else if (allowedFolders !== undefined) {
+      nominee.allowedFolders = allowedFolders;
+    }
+
+    await nominee.save();
+    res.json({ success: true, nominee });
+  } catch (err) {
+    console.error("Update nominee failed:", err);
+    res.status(500).json({ message: "Failed to update nominee" });
+  }
+});
+
+// DELETE /api/nominees/:id — remove a nominee
+app.delete("/api/nominees/:id", auth, async (req, res) => {
+  try {
+    const nominee = await Nominee.findOne({
+      where: { id: req.params.id, userId: req.user.id },
+    });
+
+    if (!nominee) {
+      return res.status(404).json({ message: "Nominee not found" });
+    }
+
+    await nominee.destroy();
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Delete nominee failed:", err);
+    res.status(500).json({ message: "Failed to delete nominee" });
   }
 });
 

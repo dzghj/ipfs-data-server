@@ -344,6 +344,65 @@ export const AccessLog = sequelize.define(
   }
 );
 
+export const Nominee = sequelize.define(
+  "Nominee",
+  {
+    id: {
+      type: DataTypes.INTEGER,
+      primaryKey: true,
+      autoIncrement: true,
+    },
+    // The vault owner who added this nominee
+    userId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    name: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    email: {
+      type: DataTypes.STRING,
+      allowNull: false,
+    },
+    phone: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    relationship: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    // "full" | "partial"
+    accessLevel: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: "full",
+    },
+    // For partial access: array of category/folder names the nominee can see
+    allowedFolders: {
+      type: DataTypes.JSONB,
+      allowNull: true,
+      defaultValue: [],
+    },
+    createdAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.NOW,
+    },
+    updatedAt: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: Sequelize.NOW,
+    },
+  },
+  {
+    tableName: "Nominees",
+    schema: "public",
+    timestamps: false,
+  }
+);
+
 /* ===== Init ===== */
 
 (async () => {
