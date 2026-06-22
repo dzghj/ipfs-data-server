@@ -67,6 +67,7 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       filename: safeFilename,
       ownerId: req.user.id,
       mimeType: req.file.mimetype,
+      category: req.body.category || "Personal",
     });
 
     const record = await FileRecord.create({
@@ -78,6 +79,7 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       iv: result.iv, // hex string    
       authTag: result.authTag, // hex string   
       mimeType: req.file.mimetype,
+      category: req.body.category || "Personal",
       uploadedAt: new Date(),
     });
 
@@ -226,7 +228,7 @@ app.get("/api/myfiles", auth, async (req, res) => {
     const files = await FileRecord.findAll({
       where: { userId: req.user.id },
       order: [["uploadedAt", "DESC"]],
-      attributes: ["id", "filename", "cid", "uploadedAt","protectionOn","keyHolderList"]
+      attributes: ["id", "filename", "cid", "uploadedAt", "protectionOn", "keyHolderList", "category", "mimeType"]
     });
 
     res.json({ success: true, files });
