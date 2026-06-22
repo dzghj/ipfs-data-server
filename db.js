@@ -88,6 +88,15 @@ export const User = sequelize.define(
     type: DataTypes.DATE,
     allowNull: true,
   },
+  checkinInterval: {
+    type: DataTypes.INTEGER,
+    defaultValue: 90,
+  },
+  lastCheckinAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    defaultValue: Sequelize.NOW,
+  },
     createdAt: {
       type: DataTypes.DATE,
       allowNull: false,

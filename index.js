@@ -305,6 +305,44 @@ app.get("/api/upgrade/options", auth,async (req, res) => {
   }
 });
 
+/* ===== Check-in interval ===== */
+app.post("/api/checkin/interval", auth, async (req, res) => {
+  try {
+    const { interval } = req.body;
+    const days = parseInt(interval, 10);
+
+    if (!days || days < 1 || days > 365) {
+      return res.status(400).json({ message: "Interval must be between 1 and 365 days" });
+    }
+
+    await User.update(
+      { checkinInterval: days, lastCheckinAt: new Date() },
+      { where: { id: req.user.id } }
+    );
+
+    res.json({ success: true, checkinInterval: days });
+  } catch (err) {
+    console.error("Save checkin interval failed:", err);
+    res.status(500).json({ message: "Failed to save check-in interval" });
+  }
+});
+
+app.get("/api/checkin/interval", auth, async (req, res) => {
+  try {
+    const user = await User.findOne({
+      where: { id: req.user.id },
+      attributes: ["checkinInterval", "lastCheckinAt"],
+    });
+    res.json({
+      checkinInterval: user?.checkinInterval || 90,
+      lastCheckinAt: user?.lastCheckinAt || null,
+    });
+  } catch (err) {
+    console.error("Get checkin interval failed:", err);
+    res.status(500).json({ message: "Failed to get check-in interval" });
+  }
+});
+
 /* ===== Nominees CRUD ===== */
 
 // GET /api/nominees — list all nominees for the logged-in user
