@@ -1,5 +1,5 @@
 import express from "express";
-import { User, Keyholder } from "./db.js";
+import { User } from "./db.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";

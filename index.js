@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 
 import authRoutes, { auth } from "./auth.js";
 import { sequelize, FileRecord, User, Plan, Nominee } from "./db.js";
-import { secureUpload,secureView } from "./secure-share/index.js";
+import { secureUpload, secureView } from "./secure-share/index.js";
 
 
 
