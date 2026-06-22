@@ -1,7 +1,6 @@
 import { ipfs } from "./ipfs-client.js";
 import { generateKey, encrypt, decrypt, sha256 } from "./crypto-utils.js";
-import { encryptForUser } from "./user-keys.js";
-import { SharedKey, FileRecord, AccessLog } from "../db.js";
+import { FileRecord, AccessLog } from "../db.js";
 import crypto from "crypto";
 
 
@@ -101,16 +100,9 @@ export async function secureView({ fileId, user }) {
   };
 }
 
-/* ===== Share File ===== */
-export async function shareFile({ cid, fileKey, userId, userPublicKey, ttlMinutes }) {
-  const encryptedKey = encryptForUser(fileKey, userPublicKey);
-  const expiresAt = ttlMinutes ? Date.now() + ttlMinutes*60*1000 : null;
-
-  // Save in DB
-  await SharedKey.create({ fileId: cid, keyholderId: userId, encryptedKey: encryptedKey.toString("base64") });
-
-  // Audit
-  await AccessLog.create({ actorEmail: userId.toString(), role: "system", action: "GRANT_ACCESS", note: cid });
+/* ===== Share File (not currently used) ===== */
+export async function shareFile() {
+  throw new Error("shareFile is not implemented");
 }
 
 /* ===== TODO: batchShare / revoke / rotate keys ===== */
