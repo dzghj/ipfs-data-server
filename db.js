@@ -112,6 +112,19 @@ export const AccessLog = sequelize.define(
   { tableName: "AccessLogs", schema: "public", timestamps: false }
 );
 
+/* ===== Folders ===== */
+
+export const Folder = sequelize.define(
+  "Folder",
+  {
+    id:        { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId:    { type: DataTypes.INTEGER, allowNull: false },
+    name:      { type: DataTypes.STRING,  allowNull: false },
+    createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
+  },
+  { tableName: "Folders", schema: "public", timestamps: false }
+);
+
 /* ===== Nominees ===== */
 
 export const Nominee = sequelize.define(

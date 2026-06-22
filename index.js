@@ -5,7 +5,7 @@ import multer from "multer";
 import dotenv from "dotenv";
 
 import authRoutes, { auth } from "./auth.js";
-import { sequelize, FileRecord, User, Plan, Nominee } from "./db.js";
+import { sequelize, FileRecord, User, Plan, Nominee, Folder } from "./db.js";
 import { secureUpload, secureView } from "./secure-share/index.js";
 
 
@@ -302,6 +302,51 @@ app.get("/api/upgrade/options", auth,async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Failed to load upgrade plans" });
+  }
+});
+
+/* ===== Folders CRUD ===== */
+
+app.get("/api/folders", auth, async (req, res) => {
+  try {
+    const folders = await Folder.findAll({
+      where: { userId: req.user.id },
+      order: [["createdAt", "ASC"]],
+      attributes: ["id", "name", "createdAt"],
+    });
+    res.json({ success: true, folders });
+  } catch (err) {
+    console.error("Fetch folders failed:", err);
+    res.status(500).json({ message: "Failed to fetch folders" });
+  }
+});
+
+app.post("/api/folders", auth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ message: "Folder name required" });
+
+    // Check duplicate
+    const existing = await Folder.findOne({ where: { userId: req.user.id, name } });
+    if (existing) return res.status(409).json({ message: `"${name}" folder already exists` });
+
+    const folder = await Folder.create({ userId: req.user.id, name });
+    res.status(201).json({ success: true, folder });
+  } catch (err) {
+    console.error("Create folder failed:", err);
+    res.status(500).json({ message: "Failed to create folder" });
+  }
+});
+
+app.delete("/api/folders/:id", auth, async (req, res) => {
+  try {
+    const folder = await Folder.findOne({ where: { id: req.params.id, userId: req.user.id } });
+    if (!folder) return res.status(404).json({ message: "Folder not found" });
+    await folder.destroy();
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Delete folder failed:", err);
+    res.status(500).json({ message: "Failed to delete folder" });
   }
 });
 
