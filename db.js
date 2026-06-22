@@ -136,6 +136,10 @@ export const Nominee = sequelize.define(
     email:        { type: DataTypes.STRING,  allowNull: false },
     phone:        { type: DataTypes.STRING,  allowNull: true },
     relationship: { type: DataTypes.STRING,  allowNull: true },
+    // If invite-as-account used, link to the User account id for the nominee
+    nomineeAccountId: { type: DataTypes.INTEGER, allowNull: true },
+    // Optional nominee public key (PEM) for encrypting file keys to nominee
+    publicKey: { type: DataTypes.TEXT, allowNull: true },
     accessLevel:  { type: DataTypes.STRING,  allowNull: false, defaultValue: "full" },
     allowedFolders: { type: DataTypes.JSONB, allowNull: true, defaultValue: [] },
     createdAt:    { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },

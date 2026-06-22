@@ -7,7 +7,7 @@ import { Resend } from "resend";
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET || "supersecret";
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 
 /* ==============================
@@ -49,12 +49,16 @@ router.post("/register", async (req, res) => {
     const clientUrl = process.env.CLIENT_URL.replace(/\/$/, "");
     const verifyLink = `${clientUrl}/set-password/${verifyToken}`;
 
-    await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL,
-      to: email,
-      subject: "Verify your email & set password",
-      html: `<p>Set your password <a href="${verifyLink}">here</a></p>`,
-    });
+    if (resend) {
+      await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL,
+        to: email,
+        subject: "Verify your email & set password",
+        html: `<p>Set your password <a href="${verifyLink}">here</a></p>`,
+      });
+    } else {
+      console.log("Skipping email send (RESEND_API_KEY not set). Verify link:", verifyLink);
+    }
 
     res.status(201).json({ message: "Verification email sent" });
 
@@ -144,12 +148,16 @@ router.post("/resend-verification", async (req, res) => {
     const clientUrl = process.env.CLIENT_URL.replace(/\/$/, "");
     const verifyLink = `${clientUrl}/set-password/${verifyToken}`;
 
-    await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL,
-      to: email,
-      subject: "Verify your email",
-      html: `<p>Set your password <a href="${verifyLink}">here</a></p>`,
-    });
+    if (resend) {
+      await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL,
+        to: email,
+        subject: "Verify your email",
+        html: `<p>Set your password <a href="${verifyLink}">here</a></p>`,
+      });
+    } else {
+      console.log("Skipping email send (RESEND_API_KEY not set). Verify link:", verifyLink);
+    }
 
     res.json({ message: "Verification email resent" });
   } catch (err) {
@@ -266,21 +274,26 @@ router.post("/forgot-password", async (req, res) => {
     const clientUrl = process.env.CLIENT_URL.replace(/\/$/, "");
     const resetLink = `${clientUrl}/reset-password/${resetToken}`;
 
-    const emailResponse = await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL,
-      to: email,
-      subject: "Password Reset",
-      html: `<p>Reset <a href="${resetLink}">here</a></p>`,
-    });
-
-    if (emailResponse.error) {
-      return res.status(500).json({
-        message: "Failed to send reset email",
-        error: emailResponse.error.message,
+    if (resend) {
+      const emailResponse = await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL,
+        to: email,
+        subject: "Password Reset",
+        html: `<p>Reset <a href="${resetLink}">here</a></p>`,
       });
-    }
 
-    res.json({ message: "Reset email sent" });
+      if (emailResponse.error) {
+        return res.status(500).json({
+          message: "Failed to send reset email",
+          error: emailResponse.error.message,
+        });
+      }
+
+      res.json({ message: "Reset email sent" });
+    } else {
+      console.log("Skipping reset email (RESEND_API_KEY not set). Reset link:", resetLink);
+      res.json({ message: "Reset link generated (skipped email send in dev)" });
+    }
 
   } catch (err) {
     res.status(500).json({

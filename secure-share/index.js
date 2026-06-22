@@ -1,6 +1,6 @@
 import { ipfs } from "./ipfs-client.js";
 import { generateKey, encrypt, decrypt, sha256 } from "./crypto-utils.js";
-import { FileRecord, AccessLog } from "../db.js";
+import { FileRecord, AccessLog, Nominee } from "../db.js";
 import crypto from "crypto";
 
 
@@ -33,22 +33,17 @@ export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
 }
 /* ===== Secure View ===== */
 export async function secureView({ fileId, user }) {
-
-  const file = await FileRecord.findOne({
-    where: { id: fileId, userId: user.id }
-  });
+  const file = await FileRecord.findOne({ where: { id: fileId } });
 
   if (!file) {
-    console.error("File not found for user:", user?.email);
+    console.error("File not found:", fileId);
     throw new Error("File not found");
   }
 
-  console.log("File found:", {
-    id: file.id,
-    filename: file.filename,
-    cid: file.cid,
-    storedHash: file.sha256Hash
-  });
+  // Only owner may request decrypted file bytes via secureView
+  if (!user || user.id !== file.userId) {
+    throw new Error("Not authorized");
+  }
 
   const chunks = [];
   for await (const chunk of ipfs.cat(file.cid)) {
@@ -74,22 +69,16 @@ export async function secureView({ fileId, user }) {
   if (recalculatedHash !== file.sha256Hash) {
     integrityVerified = false;
     integrityNote = "WARNING: SHA256 hash mismatch detected";
-   
-  } else {
-   // console.log("✅ Hash verified successfully");
   }
 
   await AccessLog.create({
-    actorEmail: user.email,
+    actorEmail: user?.email || null,
     role: "User",
     action: "VIEW_FILE",
     fileId: file.id,
     ipAddress: null,
     note: integrityNote
   });
-
-  console.log("AccessLog written with note:", integrityNote);
-  console.log("---- secureView END ----");
 
   return {
     buffer: decryptedBuffer,
@@ -98,6 +87,38 @@ export async function secureView({ fileId, user }) {
     sha256Hash: recalculatedHash,
     integrityVerified
   };
+}
+
+// Return the raw encrypted bytes from IPFS (no decryption). Access allowed for owner or nominee.
+export async function secureFetchEncrypted({ fileId, user }) {
+  const file = await FileRecord.findOne({ where: { id: fileId } });
+  if (!file) throw new Error("File not found");
+
+  if (user.id !== file.userId) {
+    const nominee = await Nominee.findOne({ where: { userId: file.userId, nomineeAccountId: user.id } });
+    if (!nominee) throw new Error("Not authorized");
+    if (nominee.accessLevel === "partial") {
+      const allowed = nominee.allowedFolders || [];
+      if (!allowed.includes(file.category)) throw new Error("Not authorized");
+    }
+  }
+
+  const chunks = [];
+  for await (const chunk of ipfs.cat(file.cid)) {
+    chunks.push(chunk);
+  }
+  const encryptedBuffer = Buffer.concat(chunks);
+
+  await AccessLog.create({
+    actorEmail: user?.email || null,
+    role: user.id === file.userId ? "User" : "Nominee",
+    action: "FETCH_ENCRYPTED",
+    fileId: file.id,
+    ipAddress: null,
+    note: "Encrypted file fetched",
+  });
+
+  return { encryptedBuffer, mimeType: file.mimeType || "application/octet-stream", filename: file.filename, iv: file.iv, authTag: file.authTag };
 }
 
 /* ===== Share File (not currently used) ===== */

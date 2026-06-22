@@ -9,9 +9,9 @@ export function generateUserKeyPair() {
 }
 
 export function encryptForUser(fileKey, publicKey) {
-  return crypto.publicEncrypt(publicKey, fileKey);
+  return crypto.publicEncrypt({ key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, fileKey);
 }
 
 export function decryptForUser(encryptedKey, privateKey) {
-  return crypto.privateDecrypt(privateKey, encryptedKey);
+  return crypto.privateDecrypt({ key: privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" }, encryptedKey);
 }
