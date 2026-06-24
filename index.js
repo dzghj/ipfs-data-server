@@ -5,8 +5,12 @@ import multer from "multer";
 import dotenv from "dotenv";
 
 import authRoutes, { auth } from "./auth.js";
-import { sequelize, FileRecord, User, Plan, Nominee, Folder } from "./db.js";
+import jwt from "jsonwebtoken";
+import { Resend } from "resend";
+import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog } from "./db.js";
 import { secureUpload, secureView } from "./secure-share/index.js";
+import { ipfs } from "./secure-share/ipfs-client.js";
+import { decrypt } from "./secure-share/crypto-utils.js";
 
 
 
@@ -403,6 +407,154 @@ app.get("/api/nominees", auth, async (req, res) => {
   } catch (err) {
     console.error("Fetch nominees failed:", err);
     res.status(500).json({ message: "Failed to fetch nominees" });
+  }
+});
+
+/* ===== Nominee Access (time-limited link) ===== */
+const SECRET = process.env.JWT_SECRET || "supersecret";
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+const CLIENT_URL = (process.env.CLIENT_URL || "").replace(/\/$/, "");
+
+// Owner triggers an access email to a nominee (protected)
+app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
+  try {
+    const nomineeId = req.params.nomineeId;
+    const nominee = await Nominee.findOne({ where: { id: nomineeId, userId: req.user.id } });
+    if (!nominee) return res.status(404).json({ message: "Nominee not found" });
+
+    // gather allowed files
+    let files = [];
+    if (nominee.accessLevel === "full") {
+      files = await FileRecord.findAll({ where: { userId: req.user.id }, attributes: ["id"] });
+    } else {
+      files = await FileRecord.findAll({ where: { userId: req.user.id, category: nominee.allowedFolders }, attributes: ["id"] });
+    }
+
+    const fileIds = files.map(f => f.id);
+
+    const token = jwt.sign({ type: "nominee_access", ownerId: req.user.id, nomineeId: nominee.id, fileIds }, SECRET, { expiresIn: req.body.expiresIn || "14d" });
+
+    const link = `${CLIENT_URL}/nominee-access?token=${token}`;
+
+    if (resend) {
+      await resend.emails.send({
+        from: process.env.RESEND_FROM_EMAIL,
+        to: nominee.email,
+        subject: "Access to vault files",
+        html: `<p>You were granted temporary access to files. Click <a href="${link}">here</a> to view and download.</p>`,
+      });
+    } else {
+      console.log("Nominee access link (no RESEND):", link);
+    }
+
+    res.json({ success: true, link });
+  } catch (err) {
+    console.error("Send nominee access failed:", err);
+    res.status(500).json({ message: "Failed to send nominee access" });
+  }
+});
+
+// Public: redeem token and list allowed files
+app.get("/api/nominee-access", async (req, res) => {
+  try {
+    const token = req.query.token;
+    if (!token) return res.status(400).json({ message: "token required" });
+
+    let payload;
+    try {
+      payload = jwt.verify(token, SECRET);
+    } catch (err) {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+
+    if (payload.type !== "nominee_access") return res.status(400).json({ message: "Invalid token type" });
+
+    const owner = await User.findOne({ where: { id: payload.ownerId } });
+    if (!owner) return res.status(404).json({ message: "Owner not found" });
+
+    // Prevent access if owner logged back in after token issuance
+    if (owner.loginAt) {
+      const loginIat = Math.floor(new Date(owner.loginAt).getTime() / 1000);
+      if (payload.iat && loginIat > payload.iat) {
+        return res.status(403).json({ message: "Owner has returned; access revoked" });
+      }
+    }
+
+    // fetch files
+    let files = [];
+    if (Array.isArray(payload.fileIds) && payload.fileIds.length > 0) {
+      files = await FileRecord.findAll({ where: { id: payload.fileIds }, attributes: ["id", "filename", "cid", "mimeType", "uploadedAt"] });
+    } else {
+      // fallback: return no files
+      files = [];
+    }
+
+    const nominee = await Nominee.findOne({ where: { id: payload.nomineeId } });
+
+    await AccessLog.create({ actorEmail: nominee ? nominee.email : null, role: "nominee", action: "NOMINEE_LINK_REDEEM", fileId: null, ipAddress: req.ip, note: `Redeemed token for owner ${payload.ownerId}` });
+
+    res.json({ success: true, files });
+  } catch (err) {
+    console.error("Nominee access list failed:", err);
+    res.status(500).json({ message: "Failed to process nominee access" });
+  }
+});
+
+// Public: download a specific file via token
+app.get("/api/nominee-access/:fileId", async (req, res) => {
+  try {
+    const token = req.query.token;
+    if (!token) return res.status(400).json({ message: "token required" });
+
+    let payload;
+    try {
+      payload = jwt.verify(token, SECRET);
+    } catch (err) {
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+
+    if (payload.type !== "nominee_access") return res.status(400).json({ message: "Invalid token type" });
+
+    const fileId = parseInt(req.params.fileId, 10);
+    if (!Array.isArray(payload.fileIds) || !payload.fileIds.includes(fileId)) {
+      return res.status(403).json({ message: "Not authorized for this file" });
+    }
+
+    const file = await FileRecord.findOne({ where: { id: fileId, userId: payload.ownerId } });
+    if (!file) return res.status(404).json({ message: "File not found" });
+
+    // Prevent access if owner logged back in after token issuance
+    const owner = await User.findOne({ where: { id: payload.ownerId } });
+    if (owner && owner.loginAt) {
+      const loginIat = Math.floor(new Date(owner.loginAt).getTime() / 1000);
+      if (payload.iat && loginIat > payload.iat) {
+        return res.status(403).json({ message: "Owner has returned; access revoked" });
+      }
+    }
+
+    // Fetch encrypted content from IPFS and decrypt using stored key
+    const chunks = [];
+    for await (const chunk of ipfs.cat(file.cid)) {
+      chunks.push(chunk);
+    }
+    const encryptedBuffer = Buffer.concat(chunks);
+
+    const key = Buffer.from(file.encryptionKey, "base64");
+    const iv = Buffer.from(file.iv, "hex");
+    const authTag = Buffer.from(file.authTag, "hex");
+
+    const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
+
+    const nominee = await Nominee.findOne({ where: { id: payload.nomineeId } });
+    await AccessLog.create({ actorEmail: nominee ? nominee.email : null, role: "nominee", action: "DOWNLOAD_FILE", fileId: file.id, ipAddress: req.ip, note: null });
+
+    res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
+    res.send(decryptedBuffer);
+
+  } catch (err) {
+    console.error("Nominee download failed:", err);
+    res.status(500).json({ message: "Failed to download file" });
   }
 });
 
