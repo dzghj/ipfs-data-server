@@ -454,6 +454,29 @@ app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
   }
 });
 
+// GET /api/nominee-access/status/:nomineeId — check if nominee has opened their link (TEST HELPER)
+app.get("/api/nominee-access/status/:nomineeId", auth, async (req, res) => {
+  try {
+    const nominee = await Nominee.findOne({ where: { id: req.params.nomineeId, userId: req.user.id } });
+    if (!nominee) return res.status(404).json({ message: "Nominee not found" });
+
+    const log = await AccessLog.findOne({
+      where: { actorEmail: nominee.email, action: "NOMINEE_LINK_REDEEM" },
+      order: [["timestamp", "DESC"]],
+    });
+
+    res.json({
+      success: true,
+      opened: !!log,
+      openedAt: log ? log.timestamp : null,
+      nomineeEmail: nominee.email,
+    });
+  } catch (err) {
+    console.error("Nominee status check failed:", err);
+    res.status(500).json({ message: "Failed to check nominee status" });
+  }
+});
+
 // Public: redeem token and list allowed files
 app.get("/api/nominee-access", async (req, res) => {
   try {
