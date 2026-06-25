@@ -7,7 +7,8 @@ import dotenv from "dotenv";
 import authRoutes, { auth } from "./auth.js";
 import jwt from "jsonwebtoken";
 import { Resend } from "resend";
-import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog } from "./db.js";
+import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend } from "./db.js";
+import { Op } from "sequelize";
 import { secureUpload, secureView } from "./secure-share/index.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
 import { decrypt } from "./secure-share/crypto-utils.js";
@@ -414,6 +415,9 @@ app.get("/api/nominees", auth, async (req, res) => {
 const SECRET = process.env.JWT_SECRET || "supersecret";
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const CLIENT_URL = (process.env.CLIENT_URL || "").replace(/\/$/, "");
+const INTERNAL_SECRET = process.env.INTERNAL_SECRET || "internal-dev-secret";
+// How many hours to wait before resending to an unopened link (configurable for testing)
+const RESEND_INTERVAL_HOURS = parseFloat(process.env.RESEND_INTERVAL_HOURS || "24");
 
 // Owner triggers an access email to a nominee (protected)
 app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
@@ -446,6 +450,15 @@ app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
     } else {
       console.log("Nominee access link (no RESEND):", link);
     }
+
+    // Record this send so the resend scheduler can track it
+    await NomineeAccessSend.create({
+      nomineeId:  nominee.id,
+      ownerId:    req.user.id,
+      token,
+      sendCount:  1,
+      lastSentAt: new Date(),
+    });
 
     res.json({ success: true, link });
   } catch (err) {
@@ -515,6 +528,12 @@ app.get("/api/nominee-access", async (req, res) => {
     const nominee = await Nominee.findOne({ where: { id: payload.nomineeId } });
 
     await AccessLog.create({ actorEmail: nominee ? nominee.email : null, role: "nominee", action: "NOMINEE_LINK_REDEEM", fileId: null, ipAddress: req.ip, note: `Redeemed token for owner ${payload.ownerId}` });
+
+    // Mark the send record as opened
+    await NomineeAccessSend.update(
+      { openedAt: new Date() },
+      { where: { nomineeId: payload.nomineeId, openedAt: null } }
+    );
 
     res.json({ success: true, files });
   } catch (err) {
@@ -828,6 +847,110 @@ ${JSON.stringify(logs, null, 2)}
     res.status(500).json({ error: "Audit analysis failed" });
   }
 });
+/* ===== Health Check ===== */
+app.get("/api/health", async (req, res) => {
+  try {
+    await sequelize.authenticate();
+    res.json({
+      status: "ok",
+      db: "connected",
+      uptime: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: "error",
+      db: "disconnected",
+      error: err.message,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+/* ===== Internal: Nominee Resend Check (called by external scheduler) =====
+   Protected by x-internal-secret header.
+   Finds all NomineeAccessSend records where:
+     - openedAt is null (nominee never opened the link)
+     - sendCount < 3 (haven't already resent twice)
+     - lastSentAt was more than RESEND_INTERVAL_HOURS ago
+   Then resends the email and increments sendCount.
+================================================================= */
+app.post("/api/internal/run-resend-check", async (req, res) => {
+  const secret = req.headers["x-internal-secret"];
+  if (secret !== INTERNAL_SECRET) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const cutoff = new Date(Date.now() - RESEND_INTERVAL_HOURS * 60 * 60 * 1000);
+
+  try {
+    // Find sends that are unopened, not maxed out, and old enough to resend
+    const pendingResends = await NomineeAccessSend.findAll({
+      where: {
+        openedAt:  null,
+        sendCount: { [Op.lt]: 3 },
+        lastSentAt: { [Op.lt]: cutoff },
+      },
+    });
+
+    const results = [];
+
+    for (const record of pendingResends) {
+      const nominee = await Nominee.findOne({ where: { id: record.nomineeId } });
+      if (!nominee) continue;
+
+      // Generate a fresh token (keeps expiry rolling)
+      const fileRecords = nominee.accessLevel === "full"
+        ? await FileRecord.findAll({ where: { userId: record.ownerId }, attributes: ["id"] })
+        : await FileRecord.findAll({ where: { userId: record.ownerId, category: nominee.allowedFolders }, attributes: ["id"] });
+
+      const fileIds = fileRecords.map(f => f.id);
+      const newToken = jwt.sign(
+        { type: "nominee_access", ownerId: record.ownerId, nomineeId: nominee.id, fileIds },
+        SECRET,
+        { expiresIn: "14d" }
+      );
+      const link = `${CLIENT_URL}/nominee-access?token=${newToken}`;
+
+      // Send the email
+      if (resend) {
+        await resend.emails.send({
+          from: process.env.RESEND_FROM_EMAIL,
+          to: nominee.email,
+          subject: `Reminder: You have vault access waiting (attempt ${record.sendCount + 1} of 3)`,
+          html: `
+            <p>Hi ${nominee.name},</p>
+            <p>This is a reminder that you have been granted access to a LegacyChain vault.</p>
+            <p>Click <a href="${link}">here</a> to view and download the shared files.</p>
+            <p>This is reminder ${record.sendCount + 1} of 3. If you do not need this access, you can ignore this email.</p>
+          `,
+        });
+      } else {
+        console.log(`[RESEND CHECK] No RESEND configured. Link for ${nominee.email}:`, link);
+      }
+
+      // Update the record
+      await record.update({
+        sendCount:  record.sendCount + 1,
+        lastSentAt: new Date(),
+        token:      newToken,
+      });
+
+      results.push({
+        nomineeId:  nominee.id,
+        email:      nominee.email,
+        sendCount:  record.sendCount + 1,
+      });
+    }
+
+    console.log(`[RESEND CHECK] Processed ${results.length} resend(s) at ${new Date().toISOString()}`);
+    res.json({ success: true, resent: results.length, details: results });
+  } catch (err) {
+    console.error("Resend check failed:", err);
+    res.status(500).json({ message: "Resend check failed", error: err.message });
+  }
+});
+
 /* ===== Boot Server ===== */
 const PORT = process.env.PORT || 4000;
 

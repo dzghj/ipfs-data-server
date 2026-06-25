@@ -144,6 +144,23 @@ export const Nominee = sequelize.define(
   { tableName: "Nominees", schema: "public", timestamps: false }
 );
 
+/* ===== NomineeAccessSends — tracks every link sent + resend state ===== */
+
+export const NomineeAccessSend = sequelize.define(
+  "NomineeAccessSend",
+  {
+    id:          { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    nomineeId:   { type: DataTypes.INTEGER, allowNull: false },
+    ownerId:     { type: DataTypes.INTEGER, allowNull: false },
+    token:       { type: DataTypes.TEXT,    allowNull: false },
+    sendCount:   { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 }, // 1 = initial, 2 = first resend, 3 = second resend
+    lastSentAt:  { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
+    openedAt:    { type: DataTypes.DATE,    allowNull: true  }, // filled when nominee redeems
+    createdAt:   { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
+  },
+  { tableName: "NomineeAccessSends", schema: "public", timestamps: false }
+);
+
 /* ===== Init ===== */
 
 (async () => {
