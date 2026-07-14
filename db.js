@@ -148,6 +148,22 @@ export const Nominee = sequelize.define(
   { tableName: "Nominees", schema: "public", timestamps: false }
 );
 
+/* ===== NomineeAccessSends ===== */
+
+export const NomineeAccessSend = sequelize.define(
+  "NomineeAccessSend",
+  {
+    id:        { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    nomineeId: { type: DataTypes.INTEGER, allowNull: false },
+    sentAt:    { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
+    sendCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    token:     { type: DataTypes.TEXT,    allowNull: true },
+    createdAt: { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
+    updatedAt: { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
+  },
+  { tableName: "NomineeAccessSends", schema: "public", timestamps: false }
+);
+
 /* ===== Init ===== */
 
 (async () => {

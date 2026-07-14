@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: ipfs-data-server
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: INTERNAL_API_SECRET
+        generateValue: true
+
+  - type: cron
+    name: resend-cron
+    env: node
+    plan: starter
+    schedule: "0 * * * *"
+    buildCommand: npm install
+    startCommand: npm run cron
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: INTERNAL_API_SECRET
+        fromService:
+          type: web
+          name: ipfs-data-server
+          envVarKey: INTERNAL_API_SECRET
+      - key: CRON_TARGET_URL
+        value: https://ipfs-data-server.onrender.com/api/internal/run-resend-check

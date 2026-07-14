@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { auth } from "../auth.js";
-import { Nominee, User } from "../db.js";
+import { Nominee, User, NomineeAccessSend } from "../db.js";
 import crypto from "crypto";
 import { Resend } from "resend";
 
@@ -30,6 +30,7 @@ router.post("/", auth, async (req, res, next) => {
 
     // Option A: Invite-as-account — create or reuse a User for the nominee and send set-password link
     let nomineeAccountId = null;
+    let inviteToken = null;
 
     // Check for existing user record
     let existingUser = await User.findOne({ where: { email } });
@@ -42,13 +43,13 @@ router.post("/", auth, async (req, res, next) => {
         nomineeAccountId = existingUser.id;
       } else {
         // regenerate verification token and resend set-password link
-        const verifyToken = crypto.randomBytes(32).toString("hex");
+        inviteToken = crypto.randomBytes(32).toString("hex");
         const verifyTokenExpiry = Date.now() + 24 * 60 * 60 * 1000;
-        existingUser.verifyToken = verifyToken;
+        existingUser.verifyToken = inviteToken;
         existingUser.verifyTokenExpiry = verifyTokenExpiry;
         await existingUser.save();
 
-        const verifyLink = `${clientUrl}/set-password/${verifyToken}`;
+        const verifyLink = `${clientUrl}/set-password/${inviteToken}`;
         if (resend) {
           await resend.emails.send({
             from: process.env.RESEND_FROM_EMAIL,
@@ -63,17 +64,17 @@ router.post("/", auth, async (req, res, next) => {
       }
     } else {
       // create a user invite (no password yet)
-      const verifyToken = crypto.randomBytes(32).toString("hex");
+      inviteToken = crypto.randomBytes(32).toString("hex");
       const verifyTokenExpiry = Date.now() + 24 * 60 * 60 * 1000;
 
       const created = await User.create({
         email,
-        verifyToken,
+        verifyToken: inviteToken,
         verifyTokenExpiry,
         isVerified: false,
       });
 
-      const verifyLink = `${clientUrl}/set-password/${verifyToken}`;
+      const verifyLink = `${clientUrl}/set-password/${inviteToken}`;
 
       if (resend) {
         await resend.emails.send({
@@ -100,6 +101,15 @@ router.post("/", auth, async (req, res, next) => {
       allowedFolders: level === "partial" ? (allowedFolders || []) : [],
       nomineeAccountId,
     });
+
+    // Record the initial send so the cron job can retry if needed
+    try {
+      if (resend && inviteToken) {
+        await NomineeAccessSend.create({ nomineeId: nominee.id, sentAt: new Date(), sendCount: 1, token: inviteToken });
+      }
+    } catch (e) {
+      console.warn("Failed to record NomineeAccessSend:", e.message || e);
+    }
 
     res.status(201).json({ success: true, nominee });
   } catch (err) {
