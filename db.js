@@ -136,10 +136,6 @@ export const Nominee = sequelize.define(
     email:        { type: DataTypes.STRING,  allowNull: false },
     phone:        { type: DataTypes.STRING,  allowNull: true },
     relationship: { type: DataTypes.STRING,  allowNull: true },
-    // If invite-as-account used, link to the User account id for the nominee
-    nomineeAccountId: { type: DataTypes.INTEGER, allowNull: true },
-    // Optional nominee public key (PEM) for encrypting file keys to nominee
-    publicKey: { type: DataTypes.TEXT, allowNull: true },
     accessLevel:  { type: DataTypes.STRING,  allowNull: false, defaultValue: "full" },
     allowedFolders: { type: DataTypes.JSONB, allowNull: true, defaultValue: [] },
     createdAt:    { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
@@ -148,18 +144,19 @@ export const Nominee = sequelize.define(
   { tableName: "Nominees", schema: "public", timestamps: false }
 );
 
-/* ===== NomineeAccessSends ===== */
+/* ===== NomineeAccessSends — tracks every link sent + resend state ===== */
 
 export const NomineeAccessSend = sequelize.define(
   "NomineeAccessSend",
   {
-    id:        { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-    nomineeId: { type: DataTypes.INTEGER, allowNull: false },
-    sentAt:    { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
-    sendCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-    token:     { type: DataTypes.TEXT,    allowNull: true },
-    createdAt: { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
-    updatedAt: { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
+    id:          { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    nomineeId:   { type: DataTypes.INTEGER, allowNull: false },
+    ownerId:     { type: DataTypes.INTEGER, allowNull: false },
+    token:       { type: DataTypes.TEXT,    allowNull: false },
+    sendCount:   { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 }, // 1 = initial, 2 = first resend, 3 = second resend
+    lastSentAt:  { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
+    openedAt:    { type: DataTypes.DATE,    allowNull: true  }, // filled when nominee redeems
+    createdAt:   { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
   },
   { tableName: "NomineeAccessSends", schema: "public", timestamps: false }
 );

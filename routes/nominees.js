@@ -104,8 +104,15 @@ router.post("/", auth, async (req, res, next) => {
 
     // Record the initial send so the cron job can retry if needed
     try {
-      if (resend && inviteToken) {
-        await NomineeAccessSend.create({ nomineeId: nominee.id, sentAt: new Date(), sendCount: 1, token: inviteToken });
+      if (inviteToken) {
+        await NomineeAccessSend.create({
+          nomineeId: nominee.id,
+          ownerId: req.user.id,
+          token: inviteToken,
+          sendCount: 1,
+          lastSentAt: new Date(),
+          openedAt: null,
+        });
       }
     } catch (e) {
       console.warn("Failed to record NomineeAccessSend:", e.message || e);
