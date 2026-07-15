@@ -1,0 +1,53 @@
+name: Health Check
+
+on:
+  schedule:
+    # Runs every 10 minutes (GitHub Actions minimum is 5 minutes)
+    - cron: "*/10 * * * *"
+  workflow_dispatch: # allows manual trigger from GitHub Actions tab
+
+jobs:
+  health-check:
+    name: Check server and database health
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ping health endpoint
+        run: |
+          echo "Running health check at $(date)"
+
+          RESPONSE=$(curl -s -o /tmp/health.json -w "%{http_code}" \
+            "${{ secrets.BACKEND_URL }}/api/health")
+
+          echo "HTTP Status: $RESPONSE"
+          echo "Response body:"
+          cat /tmp/health.json
+
+          if [ "$RESPONSE" != "200" ]; then
+            echo "❌ Health check FAILED — server or DB is down"
+            exit 1
+          fi
+
+          DB_STATUS=$(cat /tmp/health.json | python3 -c "import sys,json; print(json.load(sys.stdin).get('db','unknown'))")
+          echo "DB status: $DB_STATUS"
+
+          if [ "$DB_STATUS" != "connected" ]; then
+            echo "❌ Database is not connected"
+            exit 1
+          fi
+
+          echo "✅ Server and database are healthy"
+
+      # SMS alert via Twilio if any step above fails
+      - name: Send SMS alert on failure
+        if: failure()
+        run: |
+          echo "Sending SMS alert..."
+
+          curl -s -X POST "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
+            --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
+            --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
+            --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
+            --data-urlencode "Body=⚠️ LegacyChain Alert: Health check FAILED at $(date). Check server/database immediately. https://github.com/${{ github.repository }}/actions"
+
+          echo "SMS alert sent"

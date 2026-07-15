@@ -1,0 +1,33 @@
+name: Nominee Resend Check
+
+on:
+  schedule:
+    # Runs every hour — change to "*/10 * * * *" for every 10 min (GitHub min is 5 min)
+    - cron: "0 * * * *"
+  workflow_dispatch: # allows manual trigger from GitHub Actions tab
+
+jobs:
+  resend-check:
+    name: Check and resend unopened nominee links
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call resend check endpoint
+        run: |
+          echo "Running nominee resend check at $(date)"
+
+          RESPONSE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
+            -X POST "${{ secrets.BACKEND_URL }}/api/internal/run-resend-check" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}" \
+            -H "Content-Type: application/json")
+
+          echo "HTTP Status: $RESPONSE"
+          echo "Response body:"
+          cat /tmp/response.json
+
+          if [ "$RESPONSE" != "200" ]; then
+            echo "❌ Resend check failed with status $RESPONSE"
+            exit 1
+          fi
+
+          echo "✅ Resend check completed successfully"
