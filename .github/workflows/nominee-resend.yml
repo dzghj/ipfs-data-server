@@ -2,9 +2,9 @@ name: Nominee Resend Check
 
 on:
   schedule:
-    # Runs every hour — change to "*/10 * * * *" for every 10 min (GitHub min is 5 min)
-    - cron: "0 * * * *"
-  workflow_dispatch: # allows manual trigger from GitHub Actions tab
+    # Runs every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
 
 jobs:
   resend-check:
