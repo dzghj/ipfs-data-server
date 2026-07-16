@@ -2,9 +2,9 @@ name: Health Check
 
 on:
   schedule:
-    # Runs every 10 minutes (GitHub Actions minimum is 5 minutes)
+    # Runs every 10 minutes
     - cron: "*/10 * * * *"
-  workflow_dispatch: # allows manual trigger from GitHub Actions tab
+  workflow_dispatch: # manual trigger from GitHub Actions tab
 
 jobs:
   health-check:
@@ -38,16 +38,16 @@ jobs:
 
           echo "✅ Server and database are healthy"
 
-      # SMS alert via Twilio if any step above fails
-      - name: Send SMS alert on failure
+      - name: Send SMS alert via Twilio on failure
         if: failure()
         run: |
-          echo "Sending SMS alert..."
+          echo "Sending SMS alert via Twilio..."
 
-          curl -s -X POST "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
+          curl -s -X POST \
+            "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
             --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
             --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
             --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
-            --data-urlencode "Body=⚠️ LegacyChain Alert: Health check FAILED at $(date). Check server/database immediately. https://github.com/${{ github.repository }}/actions"
+            --data-urlencode "Body=⚠️ LegacyChain Alert: Health check FAILED at $(date -u). Server or database may be down. Check: https://github.com/${{ github.repository }}/actions"
 
-          echo "SMS alert sent"
+          echo "SMS alert sent to ${{ secrets.ALERT_PHONE_NUMBER }}"
