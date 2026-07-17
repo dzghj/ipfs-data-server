@@ -946,6 +946,12 @@ ${JSON.stringify(logs, null, 2)}
 });
 /* ===== Health Check ===== */
 app.get("/api/health", async (req, res) => {
+  // Require internal secret so this endpoint isn't publicly accessible
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
   try {
     await sequelize.authenticate();
     res.json({

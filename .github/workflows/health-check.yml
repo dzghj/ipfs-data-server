@@ -17,12 +17,19 @@ jobs:
           echo "Running health check at $(date)"
           echo "Target URL: ${{ secrets.BACKEND_URL }}/api/health"
 
-          # --max-time 15: fail if server takes more than 15s to respond
+          # --max-time 60: allow up to 60s for cold-start (Render free tier)
+          # --retry 2: retry twice on transient failures
+          # --retry-delay 10: wait 10s between retries
+          # -H x-internal-secret: required to pass backend auth
           HTTP_STATUS=$(curl \
-            --max-time 15 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 10 \
+            --retry-connrefused \
             --silent \
             --output /tmp/health.json \
             --write-out "%{http_code}" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_API_SECRET }}" \
             "${{ secrets.BACKEND_URL }}/api/health" || echo "CURL_FAILED")
 
           echo "HTTP Status: $HTTP_STATUS"
@@ -31,7 +38,10 @@ jobs:
 
           # Check curl itself didn't fail
           if [ "$HTTP_STATUS" = "CURL_FAILED" ]; then
-            echo "❌ Could not reach the server — check BACKEND_URL secret is set correctly"
+            echo "❌ Could not reach the server after retries — possible causes:"
+            echo "   1. BACKEND_URL secret is wrong or missing"
+            echo "   2. Server is down or failed to wake up within 60s (Render cold start)"
+            echo "   Current BACKEND_URL points to: ${{ secrets.BACKEND_URL }}"
             exit 1
           fi
 
