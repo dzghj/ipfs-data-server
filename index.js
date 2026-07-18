@@ -979,8 +979,8 @@ app.get("/api/health", async (req, res) => {
    Then resends the email and increments sendCount.
 ================================================================= */
 app.post("/api/internal/run-resend-check", async (req, res) => {
-  const secret = req.headers["x-internal-secret"];
-  if (secret !== INTERNAL_SECRET) {
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
