@@ -15,6 +15,7 @@ jobs:
       - name: Call resend check endpoint
         run: |
           echo "Running nominee resend check at $(date)"
+          echo "INTERNAL_API_SECRET set: ${{ secrets.INTERNAL_API_SECRET != '' }}"
 
           RESPONSE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
             -X POST "${{ secrets.BACKEND_URL }}/api/internal/run-resend-check" \
@@ -31,3 +32,18 @@ jobs:
           fi
 
           echo "✅ Resend check completed successfully"
+
+      - name: Send SMS alert via Twilio on failure
+        if: failure()
+        run: |
+          echo "Sending SMS alert via Twilio..."
+
+          TWILIO_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X POST \
+            "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
+            --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
+            --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
+            --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
+            --data-urlencode "Body=⚠️ LegacyChain Alert: Nominee resend check FAILED at $(date -u). Check: https://github.com/${{ github.repository }}/actions")
+
+          echo "Twilio response: $TWILIO_RESPONSE"
