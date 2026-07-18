@@ -2,8 +2,8 @@ name: Nominee Resend Check
 
 on:
   schedule:
-    # Runs every 6 hours
-    - cron: "0 */6 * * *"
+    # Runs every 3 days (at midnight on day 1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31)
+    - cron: "0 0 */3 * *"
   workflow_dispatch:
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
 
           RESPONSE=$(curl -s -o /tmp/response.json -w "%{http_code}" \
             -X POST "${{ secrets.BACKEND_URL }}/api/internal/run-resend-check" \
-            -H "x-internal-secret: ${{ secrets.INTERNAL_SECRET }}" \
+            -H "x-internal-secret: ${{ secrets.INTERNAL_API_SECRET }}" \
             -H "Content-Type: application/json")
 
           echo "HTTP Status: $RESPONSE"
