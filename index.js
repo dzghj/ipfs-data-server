@@ -512,7 +512,7 @@ app.get("/api/nominees", auth, async (req, res) => {
 const SECRET = process.env.JWT_SECRET || "supersecret";
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const CLIENT_URL = (process.env.CLIENT_URL || "").replace(/\/$/, "");
-const INTERNAL_SECRET = process.env.INTERNAL_SECRET || "internal-dev-secret";
+const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET || "internal-dev-secret";
 // How many hours to wait before resending to an unopened link (configurable for testing)
 const RESEND_INTERVAL_HOURS = parseFloat(process.env.RESEND_INTERVAL_HOURS || "24");
 

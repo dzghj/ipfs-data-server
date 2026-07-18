@@ -16,6 +16,7 @@ jobs:
         run: |
           echo "Running health check at $(date)"
           echo "Target URL: ${{ secrets.BACKEND_URL }}/api/health"
+          echo "INTERNAL_API_SECRET set: ${{ secrets.INTERNAL_API_SECRET != '' }}"
 
           # --max-time 60: allow up to 60s for cold-start (Render free tier)
           # --retry 2: retry twice on transient failures
