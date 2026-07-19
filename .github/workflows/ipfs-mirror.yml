@@ -1,0 +1,69 @@
+name: IPFS Daily Mirror
+
+on:
+  schedule:
+    # Every 3 days at 4 PM UTC
+    - cron: "0 16 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  ipfs-mirror:
+    name: Pin IPFS CIDs on remote VM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Pin CIDs via SSH
+        run: |
+          echo "Running IPFS mirror at $(date)"
+
+          # Write SSH private key
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VM_IP }} >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Run pinning commands on remote VM
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.VM_SSH_USER }}@${{ secrets.VM_IP }} << 'EOF'
+            export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+            IPFS_BIN=$(which ipfs 2>/dev/null || echo "/usr/local/bin/ipfs")
+
+            CIDS=(
+              "QmVMXPiiQSWFzX1qY2P4DxbenPZrFVu5FMmcg5MumrYtot"
+              "QmUju1zDPgZxkRtu3vdR9uohiNdgRrx3Dgsgz3wSo7ETnx"
+              "QmX4Dk8HVptvv7htKwjiT1m3APBZGLV36YYKqPJtPUiwvV"
+            )
+
+            # Ensure IPFS daemon is running
+            if ! pgrep -x "ipfs" > /dev/null; then
+              echo "Starting IPFS daemon..."
+              nohup $IPFS_BIN daemon > /tmp/ipfs-daemon.log 2>&1 &
+              sleep 5
+            fi
+
+            for CID in "${CIDS[@]}"; do
+              echo "Pinning $CID..."
+              if $IPFS_BIN pin add "$CID"; then
+                echo "✅ Pinned $CID"
+              else
+                echo "❌ Failed to pin $CID"
+                exit 1
+              fi
+            done
+
+            echo "✅ All CIDs pinned successfully"
+          EOF
+
+      - name: Send SMS alert via Twilio on failure
+        if: failure()
+        run: |
+          echo "Sending SMS alert via Twilio..."
+
+          TWILIO_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X POST \
+            "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
+            --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
+            --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
+            --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
+            --data-urlencode "Body=⚠️ LegacyChain Alert: IPFS Daily Mirror FAILED at $(date -u). Check: https://github.com/${{ github.repository }}/actions")
+
+          echo "Twilio response: $TWILIO_RESPONSE"

@@ -1,0 +1,64 @@
+name: GCP IPFS Backup
+
+on:
+  schedule:
+    # Every 2 weeks on Sunday at 3 PM UTC
+    - cron: "0 15 * * 0/2"
+  workflow_dispatch:
+
+jobs:
+  gcp-backup:
+    name: Stop VM, snapshot disk, restart VM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Run GCP snapshot
+        run: |
+          PROJECT_ID="gen-lang-client-0103362464"
+          VM_NAME="instance-20260128-215242"
+          ZONE="us-central1-a"
+          DISK_NAME="instance-20260128-215242"
+          SNAP_PREFIX="ipfs-backup"
+          SNAPSHOT_NAME="$SNAP_PREFIX-$(date +%Y%m%d-%H%M%S)"
+
+          echo "Setting project..."
+          gcloud config set project $PROJECT_ID
+
+          echo "Stopping VM $VM_NAME..."
+          gcloud compute instances stop $VM_NAME --zone=$ZONE
+
+          echo "Waiting 10s for VM to stop..."
+          sleep 10
+
+          echo "Creating snapshot $SNAPSHOT_NAME..."
+          gcloud compute disks snapshot $DISK_NAME \
+            --snapshot-names=$SNAPSHOT_NAME \
+            --zone=$ZONE
+
+          echo "Starting VM $VM_NAME..."
+          gcloud compute instances start $VM_NAME --zone=$ZONE
+
+          echo "✅ Snapshot $SNAPSHOT_NAME completed"
+
+      - name: Send SMS alert via Twilio on failure
+        if: failure()
+        run: |
+          echo "Sending SMS alert via Twilio..."
+
+          TWILIO_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X POST \
+            "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
+            --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
+            --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
+            --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
+            --data-urlencode "Body=⚠️ LegacyChain Alert: GCP IPFS Backup FAILED at $(date -u). Check: https://github.com/${{ github.repository }}/actions")
+
+          echo "Twilio response: $TWILIO_RESPONSE"
