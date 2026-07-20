@@ -2,8 +2,8 @@ name: IPFS Daily Mirror
 
 on:
   schedule:
-    # Every 3 days at 4 PM UTC
-    - cron: "0 16 */3 * *"
+    # Every week on Monday at 4 PM UTC
+    - cron: "0 16 * * 1"
   workflow_dispatch:
 
 jobs:
