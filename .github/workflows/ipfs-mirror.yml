@@ -23,22 +23,15 @@ jobs:
           ssh-keyscan -H ${{ secrets.VM_IP }} >> ~/.ssh/known_hosts 2>/dev/null
 
           # Run pinning commands on remote VM
+          # IPFS daemon runs as a systemd service on the VM (always on)
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.VM_SSH_USER }}@${{ secrets.VM_IP }} << 'EOF'
-            export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-            IPFS_BIN=$(which ipfs 2>/dev/null || echo "/usr/local/bin/ipfs")
+            IPFS_BIN=/usr/local/bin/ipfs
 
             CIDS=(
               "QmVMXPiiQSWFzX1qY2P4DxbenPZrFVu5FMmcg5MumrYtot"
               "QmUju1zDPgZxkRtu3vdR9uohiNdgRrx3Dgsgz3wSo7ETnx"
               "QmX4Dk8HVptvv7htKwjiT1m3APBZGLV36YYKqPJtPUiwvV"
             )
-
-            # Ensure IPFS daemon is running
-            if ! pgrep -x "ipfs" > /dev/null; then
-              echo "Starting IPFS daemon..."
-              nohup $IPFS_BIN daemon > /tmp/ipfs-daemon.log 2>&1 &
-              sleep 5
-            fi
 
             for CID in "${CIDS[@]}"; do
               echo "Pinning $CID..."
