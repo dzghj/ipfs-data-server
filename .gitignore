@@ -18,7 +18,8 @@
 .env.test.local
 .env.production.local
 .env
-
+setup-phase1.sh
+setup-phase2ß.sh
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
