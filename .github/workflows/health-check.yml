@@ -31,14 +31,14 @@ jobs:
             --output /tmp/health.json \
             --write-out "%{http_code}" \
             -H "x-internal-secret: ${{ secrets.INTERNAL_API_SECRET }}" \
-            "${{ secrets.BACKEND_URL }}/api/health" || echo "CURL_FAILED")
+            "${{ secrets.BACKEND_URL }}/api/health" || true)
 
           echo "HTTP Status: $HTTP_STATUS"
           echo "Response body:"
           cat /tmp/health.json 2>/dev/null || echo "(no response body)"
 
-          # Check curl itself didn't fail
-          if [ "$HTTP_STATUS" = "CURL_FAILED" ]; then
+          # Check curl itself didn't fail (HTTP 000 means connection error)
+          if [ "$HTTP_STATUS" = "000" ]; then
             echo "❌ Could not reach the server after retries — possible causes:"
             echo "   1. BACKEND_URL secret is wrong or missing"
             echo "   2. Server is down or failed to wake up within 60s (Render cold start)"
