@@ -3,6 +3,40 @@ import { generateKey, encrypt, decrypt, sha256 } from "./crypto-utils.js";
 import { FileRecord, AccessLog, Nominee } from "../db.js";
 import crypto from "crypto";
 
+// ── Cluster pin helper ────────────────────────────────────────────────────────
+// After uploading to IPFS, pin via the cluster REST API so the file is
+// replicated across all cluster nodes (replication factor 2).
+async function clusterPin(cid) {
+  const clusterUrl = process.env.CLUSTER_API_URL;         // e.g. http://104.198.148.182:9094
+  const clusterUser = process.env.CLUSTER_API_USER || "admin";
+  const clusterPass = process.env.CLUSTER_API_PASSWORD || "";
+
+  if (!clusterUrl) {
+    console.warn("⚠️  CLUSTER_API_URL not set — skipping cluster pin (single-node only)");
+    return;
+  }
+
+  try {
+    const credentials = Buffer.from(`${clusterUser}:${clusterPass}`).toString("base64");
+    const res = await fetch(`${clusterUrl}/pins/${cid}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(`⚠️  Cluster pin failed for ${cid}: ${res.status} ${body}`);
+    } else {
+      console.log(`✅ Cluster pin queued for ${cid}`);
+    }
+  } catch (err) {
+    // Non-fatal — file is already on IPFS, cluster pin is best-effort
+    console.error(`⚠️  Cluster pin error for ${cid}:`, err.message);
+  }
+}
 
 /* ===== Secure Upload ===== */
 export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
@@ -14,8 +48,11 @@ export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
   const upload = await ipfs.add(encrypted);
  
   const cid = upload.cid.toString();
-  // pin 
+  // pin locally
   await ipfs.pin.add(upload.cid);
+
+  // pin across cluster (replicates to all cluster nodes)
+  await clusterPin(cid);
 
   // Save audit log
   await AccessLog.create({ actorEmail: ownerId.toString(), role: "user", action: "UPLOAD", note: filename });
