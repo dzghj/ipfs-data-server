@@ -1,0 +1,110 @@
+name: IPFS Cluster Health Check
+
+on:
+  schedule:
+    # Runs every 12 hours
+    - cron: "0 */12 * * *"
+  workflow_dispatch:
+
+jobs:
+  cluster-health:
+    name: Check all 3 cluster nodes are online
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check VM1 cluster node (136.117.221.35)
+        id: vm1
+        run: |
+          echo "Checking VM1 cluster node..."
+          RESPONSE=$(curl -s --max-time 10 -o /tmp/vm1.json -w "%{http_code}" \
+            -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
+            http://136.117.221.35:9199/id)
+          echo "VM1 HTTP status: $RESPONSE"
+          cat /tmp/vm1.json 2>/dev/null || true
+          if [ "$RESPONSE" != "200" ]; then
+            echo "VM1_STATUS=DOWN" >> $GITHUB_ENV
+            echo "❌ VM1 is DOWN (HTTP $RESPONSE)"
+          else
+            PEER_ID=$(cat /tmp/vm1.json | python3 -c "import json,sys; print(json.load(sys.stdin).get('id','unknown')[:20])" 2>/dev/null)
+            echo "VM1_STATUS=UP" >> $GITHUB_ENV
+            echo "✅ VM1 is UP — peer: $PEER_ID..."
+          fi
+
+      - name: Check VM2 cluster node (35.243.225.26)
+        id: vm2
+        run: |
+          echo "Checking VM2 cluster node..."
+          RESPONSE=$(curl -s --max-time 10 -o /tmp/vm2.json -w "%{http_code}" \
+            -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
+            http://35.243.225.26:9199/id)
+          echo "VM2 HTTP status: $RESPONSE"
+          cat /tmp/vm2.json 2>/dev/null || true
+          if [ "$RESPONSE" != "200" ]; then
+            echo "VM2_STATUS=DOWN" >> $GITHUB_ENV
+            echo "❌ VM2 is DOWN (HTTP $RESPONSE)"
+          else
+            PEER_ID=$(cat /tmp/vm2.json | python3 -c "import json,sys; print(json.load(sys.stdin).get('id','unknown')[:20])" 2>/dev/null)
+            echo "VM2_STATUS=UP" >> $GITHUB_ENV
+            echo "✅ VM2 is UP — peer: $PEER_ID..."
+          fi
+
+      - name: Check Mac Mini node (via cluster peer count on VM1)
+        id: macmini
+        run: |
+          echo "Checking Mac Mini via cluster peers list..."
+          RESPONSE=$(curl -s --max-time 10 -o /tmp/peers.json -w "%{http_code}" \
+            -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
+            http://136.117.221.35:9199/peers)
+          echo "Peers HTTP status: $RESPONSE"
+          if [ "$RESPONSE" != "200" ]; then
+            echo "MACMINI_STATUS=UNKNOWN" >> $GITHUB_ENV
+            echo "⚠️  Could not fetch peer list from VM1"
+          else
+            PEER_COUNT=$(cat /tmp/peers.json | python3 -c "import json,sys; peers=json.load(sys.stdin); print(len(peers))" 2>/dev/null || echo 0)
+            echo "Total cluster peers: $PEER_COUNT"
+            # Mac Mini peer ID starts with 12D3KooWFoF
+            MAC_ONLINE=$(cat /tmp/peers.json | python3 -c "
+import json,sys
+peers = json.load(sys.stdin)
+mac = [p for p in peers if p.get('id','').startswith('12D3KooWFoF')]
+print('UP' if mac else 'DOWN')
+" 2>/dev/null || echo "UNKNOWN")
+            echo "MACMINI_STATUS=$MAC_ONLINE" >> $GITHUB_ENV
+            if [ "$MAC_ONLINE" = "UP" ]; then
+              echo "✅ Mac Mini is UP"
+            else
+              echo "❌ Mac Mini is DOWN or not seen by cluster"
+            fi
+          fi
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "====== IPFS Cluster Health Summary ======"
+          echo "VM1    (136.117.221.35): ${{ env.VM1_STATUS }}"
+          echo "VM2    (35.243.225.26):  ${{ env.VM2_STATUS }}"
+          echo "Mac Mini:                ${{ env.MACMINI_STATUS }}"
+          echo "========================================"
+          if [ "${{ env.VM1_STATUS }}" = "DOWN" ] || [ "${{ env.VM2_STATUS }}" = "DOWN" ] || [ "${{ env.MACMINI_STATUS }}" = "DOWN" ]; then
+            echo "⚠️  One or more nodes are DOWN"
+            exit 1
+          else
+            echo "✅ All nodes are healthy"
+          fi
+
+      - name: Send SMS alert via Twilio on failure
+        if: failure()
+        run: |
+          FAILED_NODES=""
+          [ "${{ env.VM1_STATUS }}" = "DOWN" ] && FAILED_NODES="VM1 "
+          [ "${{ env.VM2_STATUS }}" = "DOWN" ] && FAILED_NODES="${FAILED_NODES}VM2 "
+          [ "${{ env.MACMINI_STATUS }}" = "DOWN" ] && FAILED_NODES="${FAILED_NODES}MacMini"
+
+          curl -s -X POST \
+            "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
+            --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
+            --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
+            --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
+            --data-urlencode "Body=⚠️ LegacyChain Cluster Alert: Node(s) DOWN: ${FAILED_NODES}. Check: https://github.com/${{ github.repository }}/actions"
+
+          echo "SMS alert sent"
