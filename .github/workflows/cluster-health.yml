@@ -58,22 +58,14 @@ jobs:
           echo "Peers HTTP status: $RESPONSE"
           if [ "$RESPONSE" != "200" ]; then
             echo "MACMINI_STATUS=UNKNOWN" >> $GITHUB_ENV
-            echo "⚠️  Could not fetch peer list from VM1"
+            echo "Could not fetch peer list from VM1"
           else
-            PEER_COUNT=$(cat /tmp/peers.json | python3 -c "import json,sys; peers=json.load(sys.stdin); print(len(peers))" 2>/dev/null || echo 0)
-            echo "Total cluster peers: $PEER_COUNT"
-            # Mac Mini peer ID starts with 12D3KooWFoF
-            MAC_ONLINE=$(cat /tmp/peers.json | python3 -c "
-import json,sys
-peers = json.load(sys.stdin)
-mac = [p for p in peers if p.get('id','').startswith('12D3KooWFoF')]
-print('UP' if mac else 'DOWN')
-" 2>/dev/null || echo "UNKNOWN")
+            MAC_ONLINE=$(cat /tmp/peers.json | python3 -c "import json,sys; peers=json.load(sys.stdin); mac=[p for p in peers if p.get('id','').startswith('12D3KooWFoF')]; print('UP' if mac else 'DOWN')" 2>/dev/null || echo "UNKNOWN")
             echo "MACMINI_STATUS=$MAC_ONLINE" >> $GITHUB_ENV
             if [ "$MAC_ONLINE" = "UP" ]; then
-              echo "✅ Mac Mini is UP"
+              echo "Mac Mini is UP"
             else
-              echo "❌ Mac Mini is DOWN or not seen by cluster"
+              echo "Mac Mini is DOWN or not seen by cluster"
             fi
           fi
 
