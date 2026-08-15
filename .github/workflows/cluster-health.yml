@@ -64,14 +64,7 @@ jobs:
             echo "PEER_COUNT=$PEER_COUNT" >> $GITHUB_ENV
             echo "Total peers connected: $PEER_COUNT"
             # Print each peer's id and addresses for visibility
-            cat /tmp/peers.json | python3 -c "
-import json,sys
-peers = json.load(sys.stdin)
-for p in peers:
-    pid = p.get('id','unknown')[:30]
-    addrs = p.get('addresses', [])
-    print(f'  Peer: {pid}... addresses: {len(addrs)}')
-" 2>/dev/null || true
+            cat /tmp/peers.json | python3 -c 'import json,sys; peers=json.load(sys.stdin); [print("  Peer: " + p.get("id","unknown")[:30] + "... addresses: " + str(len(p.get("addresses",[])))) for p in peers]' 2>/dev/null || true
           fi
 
       - name: Summary and threshold check
