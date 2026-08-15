@@ -1,4 +1,4 @@
-name: IPFS Cluster Health Check
+name: IPFS Cluster Check
 
 on:
   schedule:
@@ -8,13 +8,13 @@ on:
 
 jobs:
   cluster-health:
-    name: Check all cluster nodes are online
+    name: Check all 3 cluster nodes are online
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check VM1 cluster node
+      - name: Check VM1 - instance-20260128-215242 (104.198.148.182)
         run: |
-          echo "Checking VM1 (104.198.148.182)..."
+          echo "Checking VM1: instance-20260128-215242 at 104.198.148.182..."
           RESPONSE=$(curl -s --max-time 15 \
             -o /tmp/vm1.json \
             -w "%{http_code}" \
@@ -24,16 +24,17 @@ jobs:
           cat /tmp/vm1.json 2>/dev/null || true
           if [ "$RESPONSE" != "200" ]; then
             echo "VM1_STATUS=DOWN" >> $GITHUB_ENV
-            echo "FAIL: VM1 is DOWN (HTTP $RESPONSE)"
+            echo "FAIL: VM1 instance-20260128-215242 (104.198.148.182) is DOWN (HTTP $RESPONSE)"
           else
-            PEER_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("id","unknown")[:20])' < /tmp/vm1.json 2>/dev/null || echo "unknown")
+            PEER_ID=$(cat /tmp/vm1.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id","unknown")[:30])' 2>/dev/null || echo "unknown")
             echo "VM1_STATUS=UP" >> $GITHUB_ENV
-            echo "OK: VM1 is UP, peer: $PEER_ID"
+            echo "OK: VM1 instance-20260128-215242 (104.198.148.182) is UP"
+            echo "    Peer ID: $PEER_ID"
           fi
 
-      - name: Check VM2 cluster node
+      - name: Check VM2 - ipfs-node2-20260416-215755 (35.243.225.26)
         run: |
-          echo "Checking VM2 (35.243.225.26)..."
+          echo "Checking VM2: ipfs-node2-20260416-215755 at 35.243.225.26..."
           RESPONSE=$(curl -s --max-time 15 \
             -o /tmp/vm2.json \
             -w "%{http_code}" \
@@ -43,16 +44,17 @@ jobs:
           cat /tmp/vm2.json 2>/dev/null || true
           if [ "$RESPONSE" != "200" ]; then
             echo "VM2_STATUS=DOWN" >> $GITHUB_ENV
-            echo "FAIL: VM2 is DOWN (HTTP $RESPONSE)"
+            echo "FAIL: VM2 ipfs-node2-20260416-215755 (35.243.225.26) is DOWN (HTTP $RESPONSE)"
           else
-            PEER_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('id','unknown')[:20])" < /tmp/vm2.json 2>/dev/null || echo "unknown")
+            PEER_ID=$(cat /tmp/vm2.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id","unknown")[:30])' 2>/dev/null || echo "unknown")
             echo "VM2_STATUS=UP" >> $GITHUB_ENV
-            echo "OK: VM2 is UP, peer: $PEER_ID"
+            echo "OK: VM2 ipfs-node2-20260416-215755 (35.243.225.26) is UP"
+            echo "    Peer ID: $PEER_ID"
           fi
 
-      - name: Check peer count
+      - name: Check Mac Mini - davids-mac-mini (via peer list on VM1)
         run: |
-          echo "Checking peer count via VM1..."
+          echo "Checking Mac Mini node via cluster peer list on VM1..."
           RESPONSE=$(curl -s --max-time 15 \
             -o /tmp/peers.json \
             -w "%{http_code}" \
@@ -60,41 +62,53 @@ jobs:
             http://104.198.148.182:9094/peers)
           echo "Peers HTTP status: $RESPONSE"
           if [ "$RESPONSE" != "200" ]; then
+            echo "MACMINI_STATUS=UNKNOWN" >> $GITHUB_ENV
             echo "PEER_COUNT=0" >> $GITHUB_ENV
             echo "Could not fetch peer list from VM1"
           else
             PEER_COUNT=$(cat /tmp/peers.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo "0")
             echo "PEER_COUNT=$PEER_COUNT" >> $GITHUB_ENV
-            echo "Total peers connected: $PEER_COUNT"
+            echo "Total peers visible from VM1: $PEER_COUNT"
+            if [ "$PEER_COUNT" -ge 3 ]; then
+              echo "MACMINI_STATUS=UP" >> $GITHUB_ENV
+              echo "OK: Mac Mini davids-mac-mini is UP (3 peers visible)"
+            else
+              echo "MACMINI_STATUS=DOWN" >> $GITHUB_ENV
+              echo "FAIL: Mac Mini davids-mac-mini appears DOWN (only $PEER_COUNT peers visible)"
+            fi
+            echo "--- All peers ---"
+            cat /tmp/peers.json | python3 -c 'import json,sys; peers=json.load(sys.stdin); [print("  [" + str(i+1) + "] " + p.get("id","unknown")[:40]) for i,p in enumerate(peers)]' 2>/dev/null || true
           fi
 
       - name: Summary and threshold check
         run: |
-          echo "====== IPFS Cluster Health Summary ======"
-          echo "VM1 (104.198.148.182): $VM1_STATUS"
-          echo "VM2 (35.243.225.26):   $VM2_STATUS"
-          echo "Total peers visible:   $PEER_COUNT"
-          echo "========================================="
+          echo "====== IPFS Cluster Node Status ======"
+          echo "Node 1 - VM1   instance-20260128-215242  (104.198.148.182): $VM1_STATUS"
+          echo "Node 2 - VM2   ipfs-node2-20260416-215755 (35.243.225.26):   $VM2_STATUS"
+          echo "Node 3 - Local davids-mac-mini:                               $MACMINI_STATUS"
+          echo "Total peers visible: $PEER_COUNT / 3"
+          echo "======================================"
           HEALTHY=0
           [ "$VM1_STATUS" = "UP" ] && HEALTHY=$((HEALTHY+1))
           [ "$VM2_STATUS" = "UP" ] && HEALTHY=$((HEALTHY+1))
-          echo "Healthy nodes: $HEALTHY / 2 required minimum"
+          echo "Core nodes healthy: $HEALTHY / 2 required minimum"
           if [ "$HEALTHY" -lt 2 ]; then
-            echo "FAIL: Fewer than 2 nodes healthy - cluster degraded"
+            echo "FAIL: Fewer than 2 core nodes healthy - cluster degraded"
             exit 1
           fi
-          echo "OK: Cluster is healthy ($HEALTHY nodes up)"
+          echo "OK: Cluster is healthy ($HEALTHY core nodes up, Mac Mini: $MACMINI_STATUS)"
 
       - name: Send SMS alert via Twilio on failure
         if: failure()
         run: |
           FAILED_NODES=""
-          [ "$VM1_STATUS" != "UP" ] && FAILED_NODES="VM1 "
-          [ "$VM2_STATUS" != "UP" ] && FAILED_NODES="${FAILED_NODES}VM2"
+          [ "$VM1_STATUS" != "UP" ] && FAILED_NODES="VM1(instance-20260128) "
+          [ "$VM2_STATUS" != "UP" ] && FAILED_NODES="${FAILED_NODES}VM2(ipfs-node2) "
+          [ "$MACMINI_STATUS" = "DOWN" ] && FAILED_NODES="${FAILED_NODES}MacMini"
           curl -s -X POST \
             "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
             --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
             --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
             --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
-            --data-urlencode "Body=LegacyChain Cluster Alert: Node(s) DOWN: ${FAILED_NODES}. Peers: $PEER_COUNT. Check: https://github.com/${{ github.repository }}/actions"
+            --data-urlencode "Body=LegacyChain IPFS Cluster Alert: Node(s) DOWN: ${FAILED_NODES}. Peers online: $PEER_COUNT/3. Check: https://github.com/${{ github.repository }}/actions"
           echo "SMS alert sent"
