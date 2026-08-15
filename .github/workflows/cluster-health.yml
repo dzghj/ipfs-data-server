@@ -26,7 +26,7 @@ jobs:
             echo "VM1_STATUS=DOWN" >> $GITHUB_ENV
             echo "FAIL: VM1 is DOWN (HTTP $RESPONSE)"
           else
-            PEER_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('id','unknown')[:20])" < /tmp/vm1.json 2>/dev/null || echo "unknown")
+            PEER_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("id","unknown")[:20])' < /tmp/vm1.json 2>/dev/null || echo "unknown")
             echo "VM1_STATUS=UP" >> $GITHUB_ENV
             echo "OK: VM1 is UP, peer: $PEER_ID"
           fi
@@ -63,7 +63,7 @@ jobs:
             echo "PEER_COUNT=0" >> $GITHUB_ENV
             echo "Could not fetch peer list from VM1"
           else
-            PEER_COUNT=$(python3 -c "import json,sys; print(len(json.load(sys.stdin)))" < /tmp/peers.json 2>/dev/null || echo "0")
+            PEER_COUNT=$(cat /tmp/peers.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo "0")
             echo "PEER_COUNT=$PEER_COUNT" >> $GITHUB_ENV
             echo "Total peers connected: $PEER_COUNT"
           fi
