@@ -12,95 +12,89 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check VM1 cluster node (104.198.148.182)
-        id: vm1
+      - name: Check VM1 cluster node
         run: |
-          echo "Checking VM1 cluster node..."
-          RESPONSE=$(curl -s --max-time 15 -o /tmp/vm1.json -w "%{http_code}" \
+          echo "Checking VM1 (104.198.148.182)..."
+          RESPONSE=$(curl -s --max-time 15 \
+            -o /tmp/vm1.json \
+            -w "%{http_code}" \
             -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
             http://104.198.148.182:9094/id)
           echo "VM1 HTTP status: $RESPONSE"
           cat /tmp/vm1.json 2>/dev/null || true
           if [ "$RESPONSE" != "200" ]; then
             echo "VM1_STATUS=DOWN" >> $GITHUB_ENV
-            echo "❌ VM1 is DOWN (HTTP $RESPONSE)"
+            echo "FAIL: VM1 is DOWN (HTTP $RESPONSE)"
           else
-            PEER_ID=$(cat /tmp/vm1.json | python3 -c "import json,sys; print(json.load(sys.stdin).get('id','unknown')[:20])" 2>/dev/null)
+            PEER_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('id','unknown')[:20])" < /tmp/vm1.json 2>/dev/null || echo "unknown")
             echo "VM1_STATUS=UP" >> $GITHUB_ENV
-            echo "✅ VM1 is UP — peer: $PEER_ID..."
+            echo "OK: VM1 is UP, peer: $PEER_ID"
           fi
 
-      - name: Check VM2 cluster node (35.243.225.26)
-        id: vm2
+      - name: Check VM2 cluster node
         run: |
-          echo "Checking VM2 cluster node..."
-          RESPONSE=$(curl -s --max-time 15 -o /tmp/vm2.json -w "%{http_code}" \
+          echo "Checking VM2 (35.243.225.26)..."
+          RESPONSE=$(curl -s --max-time 15 \
+            -o /tmp/vm2.json \
+            -w "%{http_code}" \
             -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
             http://35.243.225.26:9094/id)
           echo "VM2 HTTP status: $RESPONSE"
           cat /tmp/vm2.json 2>/dev/null || true
           if [ "$RESPONSE" != "200" ]; then
             echo "VM2_STATUS=DOWN" >> $GITHUB_ENV
-            echo "❌ VM2 is DOWN (HTTP $RESPONSE)"
+            echo "FAIL: VM2 is DOWN (HTTP $RESPONSE)"
           else
-            PEER_ID=$(cat /tmp/vm2.json | python3 -c "import json,sys; print(json.load(sys.stdin).get('id','unknown')[:20])" 2>/dev/null)
+            PEER_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('id','unknown')[:20])" < /tmp/vm2.json 2>/dev/null || echo "unknown")
             echo "VM2_STATUS=UP" >> $GITHUB_ENV
-            echo "✅ VM2 is UP — peer: $PEER_ID..."
+            echo "OK: VM2 is UP, peer: $PEER_ID"
           fi
 
-      - name: Check peer count via VM1 cluster peers list
-        id: peers
+      - name: Check peer count
         run: |
-          echo "Checking total peer count..."
-          RESPONSE=$(curl -s --max-time 15 -o /tmp/peers.json -w "%{http_code}" \
+          echo "Checking peer count via VM1..."
+          RESPONSE=$(curl -s --max-time 15 \
+            -o /tmp/peers.json \
+            -w "%{http_code}" \
             -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
             http://104.198.148.182:9094/peers)
           echo "Peers HTTP status: $RESPONSE"
           if [ "$RESPONSE" != "200" ]; then
             echo "PEER_COUNT=0" >> $GITHUB_ENV
-            echo "❌ Could not fetch peer list from VM1"
+            echo "Could not fetch peer list from VM1"
           else
-            PEER_COUNT=$(cat /tmp/peers.json | python3 -c "import json,sys; peers=json.load(sys.stdin); print(len(peers))" 2>/dev/null || echo "0")
+            PEER_COUNT=$(python3 -c "import json,sys; print(len(json.load(sys.stdin)))" < /tmp/peers.json 2>/dev/null || echo "0")
             echo "PEER_COUNT=$PEER_COUNT" >> $GITHUB_ENV
             echo "Total peers connected: $PEER_COUNT"
-            # Print each peer's id and addresses for visibility
-            cat /tmp/peers.json | python3 -c 'import json,sys; peers=json.load(sys.stdin); [print("  Peer: " + p.get("id","unknown")[:30] + "... addresses: " + str(len(p.get("addresses",[])))) for p in peers]' 2>/dev/null || true
           fi
 
       - name: Summary and threshold check
         run: |
-          echo ""
           echo "====== IPFS Cluster Health Summary ======"
-          echo "VM1    (104.198.148.182): ${{ env.VM1_STATUS }}"
-          echo "VM2    (35.243.225.26):   ${{ env.VM2_STATUS }}"
-          echo "Total peers visible:      ${{ env.PEER_COUNT }}"
-          echo "========================================"
-
+          echo "VM1 (104.198.148.182): $VM1_STATUS"
+          echo "VM2 (35.243.225.26):   $VM2_STATUS"
+          echo "Total peers visible:   $PEER_COUNT"
+          echo "========================================="
           HEALTHY=0
-          [ "${{ env.VM1_STATUS }}" = "UP" ] && HEALTHY=$((HEALTHY+1))
-          [ "${{ env.VM2_STATUS }}" = "UP" ] && HEALTHY=$((HEALTHY+1))
-
+          [ "$VM1_STATUS" = "UP" ] && HEALTHY=$((HEALTHY+1))
+          [ "$VM2_STATUS" = "UP" ] && HEALTHY=$((HEALTHY+1))
           echo "Healthy nodes: $HEALTHY / 2 required minimum"
-
           if [ "$HEALTHY" -lt 2 ]; then
-            echo "❌ Fewer than 2 nodes are healthy — cluster is degraded"
+            echo "FAIL: Fewer than 2 nodes healthy - cluster degraded"
             exit 1
-          else
-            echo "✅ Cluster is healthy ($HEALTHY nodes up)"
           fi
+          echo "OK: Cluster is healthy ($HEALTHY nodes up)"
 
       - name: Send SMS alert via Twilio on failure
         if: failure()
         run: |
           FAILED_NODES=""
-          [ "${{ env.VM1_STATUS }}" != "UP" ] && FAILED_NODES="VM1(104.198.148.182) "
-          [ "${{ env.VM2_STATUS }}" != "UP" ] && FAILED_NODES="${FAILED_NODES}VM2(35.243.225.26)"
-
+          [ "$VM1_STATUS" != "UP" ] && FAILED_NODES="VM1 "
+          [ "$VM2_STATUS" != "UP" ] && FAILED_NODES="${FAILED_NODES}VM2"
           curl -s -X POST \
             "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
             --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
             --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
             --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
-            --data-urlencode "Body=⚠️ LegacyChain Cluster Alert: Node(s) DOWN: ${FAILED_NODES}. Peer count: ${{ env.PEER_COUNT }}. Check: https://github.com/${{ github.repository }}/actions"
-
+            --data-urlencode "Body=LegacyChain Cluster Alert: Node(s) DOWN: ${FAILED_NODES}. Peers: $PEER_COUNT. Check: https://github.com/${{ github.repository }}/actions"
           echo "SMS alert sent"
