@@ -32,19 +32,19 @@ jobs:
             echo "OK: VM1 is UP — peer: $PEER_ID"
           fi
 
-      - name: Check VM2 - ipfs-second-server (35.243.225.26)
+      - name: Check VM2 - ipfs-second-server (34.148.116.154)
         run: |
-          echo "Checking VM2 at 35.243.225.26:9199..."
+          echo "Checking VM2 at 34.148.116.154:9199..."
           RESPONSE=$(curl -s --max-time 15 \
             -o /tmp/vm2.json \
             -w "%{http_code}" \
             -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
-            http://35.243.225.26:9199/id)
+            http://34.148.116.154:9199/id)
           echo "VM2 HTTP status: $RESPONSE"
           cat /tmp/vm2.json 2>/dev/null || true
           if [ "$RESPONSE" != "200" ]; then
             echo "VM2_STATUS=DOWN" >> $GITHUB_ENV
-            echo "FAIL: VM2 (35.243.225.26) is DOWN (HTTP $RESPONSE)"
+            echo "FAIL: VM2 (34.148.116.154) is DOWN (HTTP $RESPONSE)"
             exit 1
           else
             PEER_ID=$(cat /tmp/vm2.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id","unknown")[:30])' 2>/dev/null || echo "unknown")
@@ -82,7 +82,7 @@ jobs:
         run: |
           echo "====== IPFS Cluster Health ======"
           echo "VM1   (136.117.221.35): ${VM1_STATUS:-UNKNOWN}"
-          echo "VM2   (35.243.225.26):  ${VM2_STATUS:-UNKNOWN}"
+          echo "VM2   (34.148.116.154):  ${VM2_STATUS:-UNKNOWN}"
           echo "Mac Mini:               ${MACMINI_STATUS:-UNKNOWN}"
           echo "Peers online: ${PEER_COUNT:-0} / 3"
           echo "================================="
