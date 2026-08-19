@@ -2,7 +2,6 @@ name: AI Agent Health Check
 
 on:
   schedule:
-    # Runs every 12 hours
     - cron: "0 */12 * * *"
   workflow_dispatch:
 
@@ -12,77 +11,51 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check AI agent server is online
+      - name: Check AI agent server health endpoint
         run: |
-          echo "Checking AI agent server at Mac Mini (100.73.92.84:7070)..."
-          echo "Note: Mac Mini is on Tailscale — using public health endpoint if configured"
-
-          # Try public health endpoint (if AI server exposes one via ngrok or public IP)
           AGENT_URL="${{ secrets.AI_AGENT_HEALTH_URL }}"
+          AGENT_SECRET="${{ secrets.AGENT_SECRET }}"
 
           if [ -z "$AGENT_URL" ]; then
             echo "AI_AGENT_STATUS=SKIPPED" >> $GITHUB_ENV
-            echo "AI_AGENT_URL not configured — skipping direct check"
-            echo "To enable: set AI_AGENT_HEALTH_URL secret to your agent's public health endpoint"
+            echo "AI_AGENT_HEALTH_URL secret not set - skipping"
           else
-            RESPONSE=$(curl -s --max-time 10 \
-              -o /tmp/agent.json \
-              -w "%{http_code}" \
-              -H "X-Agent-Secret: ${{ secrets.AGENT_SECRET }}" \
-              "${AGENT_URL}/health")
-            echo "Agent HTTP status: $RESPONSE"
+            echo "Checking AI agent at $AGENT_URL/health ..."
+            RESPONSE=$(curl -s --max-time 15 -o /tmp/agent.json -w "%{http_code}" -H "X-Agent-Secret: $AGENT_SECRET" "$AGENT_URL/health")
+            echo "HTTP status: $RESPONSE"
             cat /tmp/agent.json 2>/dev/null || true
             if [ "$RESPONSE" = "200" ]; then
               echo "AI_AGENT_STATUS=UP" >> $GITHUB_ENV
-              echo "OK: AI agent server is UP"
+              echo "OK: AI agent is UP"
             else
               echo "AI_AGENT_STATUS=DOWN" >> $GITHUB_ENV
-              echo "FAIL: AI agent server is DOWN or unreachable (HTTP $RESPONSE)"
+              echo "FAIL: AI agent DOWN (HTTP $RESPONSE)"
             fi
           fi
 
-      - name: Check Ollama model is loaded and responding
+      - name: Check Ollama model is loaded
         run: |
-          echo "Checking Ollama AI model..."
-          OLLAMA_URL="${{ secrets.OLLAMA_HEALTH_URL }}"
+          OLLAMA_URL="${{ secrets.AI_AGENT_HEALTH_URL }}"
 
           if [ -z "$OLLAMA_URL" ]; then
             echo "OLLAMA_STATUS=SKIPPED" >> $GITHUB_ENV
-            echo "OLLAMA_HEALTH_URL not configured — skipping"
-            echo "To enable: expose Ollama via ngrok and set OLLAMA_HEALTH_URL secret"
+            echo "Ollama check skipped - no URL configured"
           else
-            # Check Ollama /api/tags to see if model is loaded
-            RESPONSE=$(curl -s --max-time 15 \
-              -o /tmp/ollama.json \
-              -w "%{http_code}" \
-              "${OLLAMA_URL}/api/tags")
-            echo "Ollama HTTP status: $RESPONSE"
-
+            echo "Checking Ollama via $OLLAMA_URL/api/tags ..."
+            RESPONSE=$(curl -s --max-time 15 -o /tmp/ollama.json -w "%{http_code}" "$OLLAMA_URL/api/tags")
+            echo "HTTP status: $RESPONSE"
             if [ "$RESPONSE" != "200" ]; then
               echo "OLLAMA_STATUS=DOWN" >> $GITHUB_ENV
-              echo "FAIL: Ollama server not responding (HTTP $RESPONSE)"
+              echo "FAIL: Ollama not responding (HTTP $RESPONSE)"
             else
-              # Check if llama3.2 model is present
-              MODEL_FOUND=$(cat /tmp/ollama.json | python3 -c "
-import json,sys
-data = json.load(sys.stdin)
-models = [m.get('name','') for m in data.get('models',[])]
-print('YES' if any('llama3' in m for m in models) else 'NO')
-" 2>/dev/null || echo "UNKNOWN")
-
+              MODEL_FOUND=$(cat /tmp/ollama.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('YES' if any('llama3' in m.get('name','') for m in d.get('models',[])) else 'NO')" 2>/dev/null || echo "UNKNOWN")
+              echo "Model found: $MODEL_FOUND"
               if [ "$MODEL_FOUND" = "YES" ]; then
                 echo "OLLAMA_STATUS=UP" >> $GITHUB_ENV
-                echo "OK: Ollama is UP and llama3 model is loaded"
-                echo "Available models:"
-                cat /tmp/ollama.json | python3 -c "
-import json,sys
-data = json.load(sys.stdin)
-for m in data.get('models',[]): print('  -', m.get('name',''))
-" 2>/dev/null || true
+                echo "OK: Ollama UP and llama3 loaded"
               else
                 echo "OLLAMA_STATUS=NO_MODEL" >> $GITHUB_ENV
-                echo "WARN: Ollama is UP but llama3 model not found"
-                echo "Run: ollama pull llama3.2"
+                echo "WARN: Ollama UP but llama3 not found - run: ollama pull llama3.2"
               fi
             fi
           fi
@@ -90,29 +63,26 @@ for m in data.get('models',[]): print('  -', m.get('name',''))
       - name: Summary
         run: |
           echo "====== AI Health Summary ======"
-          echo "AI Agent Server: ${AI_AGENT_STATUS:-SKIPPED}"
-          echo "Ollama Model:    ${OLLAMA_STATUS:-SKIPPED}"
+          echo "AI Agent: ${AI_AGENT_STATUS:-SKIPPED}"
+          echo "Ollama:   ${OLLAMA_STATUS:-SKIPPED}"
           echo "==============================="
-
-          # Fail if either is explicitly DOWN (not SKIPPED)
           if [ "${AI_AGENT_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "NO_MODEL" ]; then
             echo "FAIL: AI components need attention"
             exit 1
           fi
           echo "OK: AI health check passed"
 
-      - name: Send SMS alert via Twilio on failure
+      - name: Send SMS alert on failure
         if: failure()
         run: |
           ISSUES=""
-          [ "${AI_AGENT_STATUS}" = "DOWN" ] && ISSUES="AI-Agent-Server "
-          [ "${OLLAMA_STATUS}" = "DOWN" ]    && ISSUES="${ISSUES}Ollama-Server "
-          [ "${OLLAMA_STATUS}" = "NO_MODEL" ] && ISSUES="${ISSUES}llama3-model-missing"
-
+          [ "${AI_AGENT_STATUS}" = "DOWN" ] && ISSUES="AI-Agent "
+          [ "${OLLAMA_STATUS}" = "DOWN" ] && ISSUES="${ISSUES}Ollama "
+          [ "${OLLAMA_STATUS}" = "NO_MODEL" ] && ISSUES="${ISSUES}llama3-missing"
           curl -s -X POST \
             "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
             --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
             --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
             --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
-            --data-urlencode "Body=LegacyChain AI Alert: Issues detected: ${ISSUES}. Check: https://github.com/${{ github.repository }}/actions"
+            --data-urlencode "Body=LegacyChain AI Alert: ${ISSUES}down. Check: https://github.com/${{ github.repository }}/actions"
           echo "SMS sent"
