@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../secure-ipfs-frontend"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+	}
+}
+
+//ngrok config add-authtoken 3I9Uddtz3iXKSL37HqFQhaa3N7d_4p2wn63SBNsNaqWWmcS22

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ipfs.cluster</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/ipfs-cluster-service</string>
+        <string>daemon</string>
+        <string>--bootstrap</string>
+        <string>/ip4/100.80.55.92/tcp/9096/p2p/12D3KooWHBuHvaDKPvaxtRsBQvoEXsuWMpKzjmw4sA1Mysb2oyMM</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CLUSTER_SECRET</key>
+        <string>53737ecb66e2aebfdc20ac12f952faeb9f910c144cd8c8d0756965492755c8b7</string>
+        <key>HOME</key>
+        <string>/Users/david</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/david/ipfs-cluster.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/david/ipfs-cluster-error.log</string>
+</dict>
+</plist>

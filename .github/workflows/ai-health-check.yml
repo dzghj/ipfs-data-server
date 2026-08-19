@@ -38,7 +38,11 @@ jobs:
 
       - name: Check Ollama model is loaded
         run: |
-          OLLAMA_URL="${{ secrets.AI_AGENT_HEALTH_URL }}"
+          OLLAMA_URL="${{ secrets.OLLAMA_URL }}"
+          # Fall back to agent URL if no dedicated Ollama URL is set
+          if [ -z "$OLLAMA_URL" ]; then
+            OLLAMA_URL="${{ secrets.AI_AGENT_HEALTH_URL }}"
+          fi
 
           if [ -z "$OLLAMA_URL" ]; then
             echo "OLLAMA_STATUS=SKIPPED" >> $GITHUB_ENV
@@ -77,7 +81,6 @@ jobs:
           else
             echo "OK: AI health check passed"
           fi
-          echo "OK: AI health check passed"
 
       - name: Send SMS alert on failure
         if: failure()
