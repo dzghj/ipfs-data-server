@@ -23,3 +23,9 @@ setup-phase2ß.sh
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Server setup scripts (local use only)
+setup-*.sh
+fix-*.py
+update-bootstrap.py
+HEALTH_CHECK_REPORT.md
