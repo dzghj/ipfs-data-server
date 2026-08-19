@@ -21,10 +21,13 @@ jobs:
             echo "AI_AGENT_HEALTH_URL secret not set - skipping"
           else
             echo "Checking AI agent at $AGENT_URL/health ..."
-            RESPONSE=$(curl -s --max-time 15 -o /tmp/agent.json -w "%{http_code}" -H "X-Agent-Secret: $AGENT_SECRET" "$AGENT_URL/health")
+            RESPONSE=$(curl -s --max-time 15 -o /tmp/agent.json -w "%{http_code}" -H "X-Agent-Secret: $AGENT_SECRET" "$AGENT_URL/health" || echo "CURL_FAILED")
             echo "HTTP status: $RESPONSE"
             cat /tmp/agent.json 2>/dev/null || true
-            if [ "$RESPONSE" = "200" ]; then
+            if [ "$RESPONSE" = "CURL_FAILED" ] || [ "$RESPONSE" = "000" ]; then
+              echo "AI_AGENT_STATUS=UNREACHABLE" >> $GITHUB_ENV
+              echo "WARN: AI agent unreachable - ngrok may not be running"
+            elif [ "$RESPONSE" = "200" ]; then
               echo "AI_AGENT_STATUS=UP" >> $GITHUB_ENV
               echo "OK: AI agent is UP"
             else
@@ -69,6 +72,10 @@ jobs:
           if [ "${AI_AGENT_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "NO_MODEL" ]; then
             echo "FAIL: AI components need attention"
             exit 1
+          elif [ "${AI_AGENT_STATUS}" = "UNREACHABLE" ]; then
+            echo "WARN: AI agent unreachable - start ngrok on Mac Mini: ngrok http 7070 --url https://conclude-pavilion-condense.ngrok-free.dev"
+          else
+            echo "OK: AI health check passed"
           fi
           echo "OK: AI health check passed"
 
