@@ -83,14 +83,7 @@ jobs:
             echo "OLLAMA_STATUS=DOWN" >> $GITHUB_ENV
             echo "FAIL: Ollama not responding (HTTP $HTTP_CODE)"
           else
-            MODEL_FOUND=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open('/tmp/ollama.json'))
-    print('YES' if any('llama3' in m.get('name','') for m in d.get('models',[])) else 'NO')
-except Exception as e:
-    print('UNKNOWN')
-")
+            MODEL_FOUND=$(python3 -c 'import json; d=json.load(open("/tmp/ollama.json")); print("YES" if any("llama3" in m.get("name","") for m in d.get("models",[])) else "NO")' 2>/dev/null || echo "UNKNOWN")
             echo "Model found: $MODEL_FOUND"
             if [ "$MODEL_FOUND" = "YES" ]; then
               echo "OLLAMA_STATUS=UP" >> $GITHUB_ENV
