@@ -2,7 +2,7 @@ name: AI Agent Health Check
 
 on:
   schedule:
-    - cron: "0 */12 * * *"
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 jobs:
@@ -12,58 +12,92 @@ jobs:
 
     steps:
       - name: Check AI agent server health endpoint
+        env:
+          AGENT_URL: ${{ secrets.AI_AGENT_HEALTH_URL }}
+          AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
         run: |
-          AGENT_URL="${{ secrets.AI_AGENT_HEALTH_URL }}"
-          AGENT_SECRET="${{ secrets.AGENT_SECRET }}"
-
           if [ -z "$AGENT_URL" ]; then
             echo "AI_AGENT_STATUS=SKIPPED" >> $GITHUB_ENV
             echo "AI_AGENT_HEALTH_URL secret not set - skipping"
+            exit 0
+          fi
+
+          # Strip trailing slash
+          AGENT_URL=$(echo "$AGENT_URL" | sed 's|/$||')
+          echo "Checking AI agent at $AGENT_URL/health ..."
+
+          HTTP_CODE=$(curl -s --max-time 15 \
+            -o /tmp/agent.json \
+            -w "%{http_code}" \
+            -H "X-Agent-Secret: $AGENT_SECRET" \
+            "$AGENT_URL/health")
+          CURL_EXIT=$?
+
+          echo "curl exit: $CURL_EXIT  HTTP status: $HTTP_CODE"
+          cat /tmp/agent.json 2>/dev/null || true
+
+          if [ $CURL_EXIT -ne 0 ] || [ "$HTTP_CODE" = "000" ]; then
+            echo "AI_AGENT_STATUS=UNREACHABLE" >> $GITHUB_ENV
+            echo "WARN: AI agent unreachable (curl exit $CURL_EXIT) - ngrok may not be running"
+          elif [ "$HTTP_CODE" = "200" ]; then
+            echo "AI_AGENT_STATUS=UP" >> $GITHUB_ENV
+            echo "OK: AI agent is UP"
           else
-            echo "Checking AI agent at $AGENT_URL/health ..."
-            RESPONSE=$(curl -s --max-time 15 -o /tmp/agent.json -w "%{http_code}" -H "X-Agent-Secret: $AGENT_SECRET" "$AGENT_URL/health" || echo "CURL_FAILED")
-            echo "HTTP status: $RESPONSE"
-            cat /tmp/agent.json 2>/dev/null || true
-            if [ "$RESPONSE" = "CURL_FAILED" ] || [ "$RESPONSE" = "000" ]; then
-              echo "AI_AGENT_STATUS=UNREACHABLE" >> $GITHUB_ENV
-              echo "WARN: AI agent unreachable - ngrok may not be running"
-            elif [ "$RESPONSE" = "200" ]; then
-              echo "AI_AGENT_STATUS=UP" >> $GITHUB_ENV
-              echo "OK: AI agent is UP"
-            else
-              echo "AI_AGENT_STATUS=DOWN" >> $GITHUB_ENV
-              echo "FAIL: AI agent DOWN (HTTP $RESPONSE)"
-            fi
+            echo "AI_AGENT_STATUS=DOWN" >> $GITHUB_ENV
+            echo "FAIL: AI agent DOWN (HTTP $HTTP_CODE)"
           fi
 
       - name: Check Ollama model is loaded
+        env:
+          OLLAMA_URL: ${{ secrets.OLLAMA_URL }}
+          FALLBACK_URL: ${{ secrets.AI_AGENT_HEALTH_URL }}
         run: |
-          OLLAMA_URL="${{ secrets.OLLAMA_URL }}"
-          # Fall back to agent URL if no dedicated Ollama URL is set
-          if [ -z "$OLLAMA_URL" ]; then
-            OLLAMA_URL="${{ secrets.AI_AGENT_HEALTH_URL }}"
+          # Use dedicated OLLAMA_URL secret; fall back to agent URL if not set
+          TARGET_URL="$OLLAMA_URL"
+          if [ -z "$TARGET_URL" ]; then
+            TARGET_URL="$FALLBACK_URL"
           fi
 
-          if [ -z "$OLLAMA_URL" ]; then
+          if [ -z "$TARGET_URL" ]; then
             echo "OLLAMA_STATUS=SKIPPED" >> $GITHUB_ENV
             echo "Ollama check skipped - no URL configured"
+            exit 0
+          fi
+
+          # Strip trailing slash
+          TARGET_URL=$(echo "$TARGET_URL" | sed 's|/$||')
+          echo "Checking Ollama via $TARGET_URL/api/tags ..."
+
+          HTTP_CODE=$(curl -s --max-time 15 \
+            -o /tmp/ollama.json \
+            -w "%{http_code}" \
+            "$TARGET_URL/api/tags")
+          CURL_EXIT=$?
+
+          echo "curl exit: $CURL_EXIT  HTTP status: $HTTP_CODE"
+
+          if [ $CURL_EXIT -ne 0 ] || [ "$HTTP_CODE" = "000" ]; then
+            echo "OLLAMA_STATUS=UNREACHABLE" >> $GITHUB_ENV
+            echo "WARN: Ollama unreachable (curl exit $CURL_EXIT)"
+          elif [ "$HTTP_CODE" != "200" ]; then
+            echo "OLLAMA_STATUS=DOWN" >> $GITHUB_ENV
+            echo "FAIL: Ollama not responding (HTTP $HTTP_CODE)"
           else
-            echo "Checking Ollama via $OLLAMA_URL/api/tags ..."
-            RESPONSE=$(curl -s --max-time 15 -o /tmp/ollama.json -w "%{http_code}" "$OLLAMA_URL/api/tags")
-            echo "HTTP status: $RESPONSE"
-            if [ "$RESPONSE" != "200" ]; then
-              echo "OLLAMA_STATUS=DOWN" >> $GITHUB_ENV
-              echo "FAIL: Ollama not responding (HTTP $RESPONSE)"
+            MODEL_FOUND=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('/tmp/ollama.json'))
+    print('YES' if any('llama3' in m.get('name','') for m in d.get('models',[])) else 'NO')
+except Exception as e:
+    print('UNKNOWN')
+")
+            echo "Model found: $MODEL_FOUND"
+            if [ "$MODEL_FOUND" = "YES" ]; then
+              echo "OLLAMA_STATUS=UP" >> $GITHUB_ENV
+              echo "OK: Ollama UP and llama3 loaded"
             else
-              MODEL_FOUND=$(cat /tmp/ollama.json | python3 -c "import json,sys; d=json.load(sys.stdin); print('YES' if any('llama3' in m.get('name','') for m in d.get('models',[])) else 'NO')" 2>/dev/null || echo "UNKNOWN")
-              echo "Model found: $MODEL_FOUND"
-              if [ "$MODEL_FOUND" = "YES" ]; then
-                echo "OLLAMA_STATUS=UP" >> $GITHUB_ENV
-                echo "OK: Ollama UP and llama3 loaded"
-              else
-                echo "OLLAMA_STATUS=NO_MODEL" >> $GITHUB_ENV
-                echo "WARN: Ollama UP but llama3 not found - run: ollama pull llama3.2"
-              fi
+              echo "OLLAMA_STATUS=NO_MODEL" >> $GITHUB_ENV
+              echo "WARN: Ollama UP but llama3 not found - run: ollama pull llama3.2"
             fi
           fi
 
@@ -76,23 +110,29 @@ jobs:
           if [ "${AI_AGENT_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "NO_MODEL" ]; then
             echo "FAIL: AI components need attention"
             exit 1
-          elif [ "${AI_AGENT_STATUS}" = "UNREACHABLE" ]; then
-            echo "WARN: AI agent unreachable - start ngrok on Mac Mini: ngrok http 7070 --url https://conclude-pavilion-condense.ngrok-free.dev"
+          elif [ "${AI_AGENT_STATUS}" = "UNREACHABLE" ] || [ "${OLLAMA_STATUS}" = "UNREACHABLE" ]; then
+            echo "WARN: One or more AI components unreachable - check ngrok and Ollama on Mac Mini"
           else
             echo "OK: AI health check passed"
           fi
 
       - name: Send SMS alert on failure
         if: failure()
+        env:
+          TWILIO_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          ALERT_TO: ${{ secrets.ALERT_PHONE_NUMBER }}
+          ALERT_FROM: ${{ secrets.TWILIO_FROM_NUMBER }}
+          REPO: ${{ github.repository }}
         run: |
           ISSUES=""
           [ "${AI_AGENT_STATUS}" = "DOWN" ] && ISSUES="AI-Agent "
           [ "${OLLAMA_STATUS}" = "DOWN" ] && ISSUES="${ISSUES}Ollama "
           [ "${OLLAMA_STATUS}" = "NO_MODEL" ] && ISSUES="${ISSUES}llama3-missing"
           curl -s -X POST \
-            "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
-            --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
-            --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
-            --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
-            --data-urlencode "Body=LegacyChain AI Alert: ${ISSUES}down. Check: https://github.com/${{ github.repository }}/actions"
+            "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json" \
+            --user "${TWILIO_SID}:${TWILIO_TOKEN}" \
+            --data-urlencode "To=${ALERT_TO}" \
+            --data-urlencode "From=${ALERT_FROM}" \
+            --data-urlencode "Body=LegacyChain AI Alert: ${ISSUES}down. Check: https://github.com/${REPO}/actions"
           echo "SMS sent"
