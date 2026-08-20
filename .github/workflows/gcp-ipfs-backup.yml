@@ -25,22 +25,10 @@ jobs:
           PROJECT_ID="gen-lang-client-0103362464"
           VM_NAME="instance-ipfs-main-server"
           ZONE="us-west1-b"
-          SNAP_PREFIX="ipfs-backup"
-          SNAPSHOT_NAME="$SNAP_PREFIX-$(date +%Y%m%d-%H%M%S)"
+          DISK_NAME="instance-20260811-224939"
+          SNAPSHOT_NAME="ipfs-backup-$(date +%Y%m%d-%H%M%S)"
 
-          echo "Setting project..."
           gcloud config set project $PROJECT_ID
-
-          echo "Finding boot disk name BEFORE stopping VM..."
-          DISK_NAME=$(gcloud compute instances describe $VM_NAME \
-            --zone=$ZONE \
-            --format="value(disks[0].source)" | awk -F/ '{print $NF}')
-
-          if [ -z "$DISK_NAME" ]; then
-            echo "❌ ERROR: Could not determine boot disk name. Aborting."
-            exit 1
-          fi
-          echo "Boot disk: $DISK_NAME"
 
           echo "Stopping VM $VM_NAME..."
           gcloud compute instances stop $VM_NAME --zone=$ZONE
@@ -48,7 +36,7 @@ jobs:
           echo "Waiting 15s for VM to fully stop..."
           sleep 15
 
-          echo "Creating snapshot $SNAPSHOT_NAME..."
+          echo "Creating snapshot $SNAPSHOT_NAME from disk $DISK_NAME..."
           gcloud compute disks snapshot $DISK_NAME \
             --snapshot-names=$SNAPSHOT_NAME \
             --zone=$ZONE
