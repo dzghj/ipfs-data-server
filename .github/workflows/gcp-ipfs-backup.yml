@@ -25,7 +25,6 @@ jobs:
           PROJECT_ID="gen-lang-client-0103362464"
           VM_NAME="instance-ipfs-main-server"
           ZONE="us-west1-b"
-          DISK_NAME="instance-ipfs-main-server"
           SNAP_PREFIX="ipfs-backup"
           SNAPSHOT_NAME="$SNAP_PREFIX-$(date +%Y%m%d-%H%M%S)"
 
@@ -38,6 +37,12 @@ jobs:
           echo "Waiting 10s for VM to stop..."
           sleep 10
 
+          echo "Finding boot disk name..."
+          DISK_NAME=$(gcloud compute instances describe $VM_NAME \
+            --zone=$ZONE \
+            --format="value(disks[0].source)" | awk -F/ '{print $NF}')
+          echo "Boot disk: $DISK_NAME"
+
           echo "Creating snapshot $SNAPSHOT_NAME..."
           gcloud compute disks snapshot $DISK_NAME \
             --snapshot-names=$SNAPSHOT_NAME \
@@ -48,7 +53,14 @@ jobs:
 
           echo "✅ Snapshot $SNAPSHOT_NAME completed"
 
-      - name: Send SMS alert via Twilio on failure
+      - name: Ensure VM is restarted on failure
+        if: failure()
+        run: |
+          gcloud config set project gen-lang-client-0103362464
+          echo "Restarting VM after failure..."
+          gcloud compute instances start instance-ipfs-main-server --zone=us-west1-b || true
+
+      - name: Send SMS alert on failure
         if: failure()
         run: |
           echo "Sending SMS alert via Twilio..."
