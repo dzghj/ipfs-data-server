@@ -23,9 +23,9 @@ jobs:
       - name: Run GCP snapshot
         run: |
           PROJECT_ID="gen-lang-client-0103362464"
-          VM_NAME="instance-20260128-215242"
-          ZONE="us-central1-a"
-          DISK_NAME="instance-20260128-215242"
+          VM_NAME="instance-ipfs-main-server"
+          ZONE="us-west1-b"
+          DISK_NAME="instance-ipfs-main-server"
           SNAP_PREFIX="ipfs-backup"
           SNAPSHOT_NAME="$SNAP_PREFIX-$(date +%Y%m%d-%H%M%S)"
 
