@@ -31,17 +31,22 @@ jobs:
           echo "Setting project..."
           gcloud config set project $PROJECT_ID
 
-          echo "Stopping VM $VM_NAME..."
-          gcloud compute instances stop $VM_NAME --zone=$ZONE
-
-          echo "Waiting 10s for VM to stop..."
-          sleep 10
-
-          echo "Finding boot disk name..."
+          echo "Finding boot disk name BEFORE stopping VM..."
           DISK_NAME=$(gcloud compute instances describe $VM_NAME \
             --zone=$ZONE \
             --format="value(disks[0].source)" | awk -F/ '{print $NF}')
+
+          if [ -z "$DISK_NAME" ]; then
+            echo "❌ ERROR: Could not determine boot disk name. Aborting."
+            exit 1
+          fi
           echo "Boot disk: $DISK_NAME"
+
+          echo "Stopping VM $VM_NAME..."
+          gcloud compute instances stop $VM_NAME --zone=$ZONE
+
+          echo "Waiting 15s for VM to fully stop..."
+          sleep 15
 
           echo "Creating snapshot $SNAPSHOT_NAME..."
           gcloud compute disks snapshot $DISK_NAME \
