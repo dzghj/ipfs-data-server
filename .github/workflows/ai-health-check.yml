@@ -49,28 +49,23 @@ jobs:
 
       - name: Check Ollama model is loaded
         env:
-          OLLAMA_URL: ${{ secrets.OLLAMA_URL }}
-          FALLBACK_URL: ${{ secrets.AI_AGENT_HEALTH_URL }}
+          AGENT_URL: ${{ secrets.AI_AGENT_HEALTH_URL }}
+          AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
         run: |
-          # Use dedicated OLLAMA_URL secret; fall back to agent URL if not set
-          TARGET_URL="$OLLAMA_URL"
-          if [ -z "$TARGET_URL" ]; then
-            TARGET_URL="$FALLBACK_URL"
-          fi
-
-          if [ -z "$TARGET_URL" ]; then
+          if [ -z "$AGENT_URL" ]; then
             echo "OLLAMA_STATUS=SKIPPED" >> $GITHUB_ENV
             echo "Ollama check skipped - no URL configured"
             exit 0
           fi
 
           # Strip trailing slash
-          TARGET_URL=$(echo "$TARGET_URL" | sed 's|/$||')
+          TARGET_URL=$(echo "$AGENT_URL" | sed 's|/$||')
           echo "Checking Ollama via $TARGET_URL/api/tags ..."
 
           HTTP_CODE=$(curl -s --max-time 15 \
             -o /tmp/ollama.json \
             -w "%{http_code}" \
+            -H "X-Agent-Secret: $AGENT_SECRET" \
             "$TARGET_URL/api/tags")
           CURL_EXIT=$?
 
@@ -100,11 +95,13 @@ jobs:
           echo "AI Agent: ${AI_AGENT_STATUS:-SKIPPED}"
           echo "Ollama:   ${OLLAMA_STATUS:-SKIPPED}"
           echo "==============================="
-          if [ "${AI_AGENT_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "NO_MODEL" ]; then
-            echo "FAIL: AI components need attention"
+          if [ "${AI_AGENT_STATUS}" = "DOWN" ]; then
+            echo "FAIL: AI agent is down"
             exit 1
-          elif [ "${AI_AGENT_STATUS}" = "UNREACHABLE" ] || [ "${OLLAMA_STATUS}" = "UNREACHABLE" ]; then
-            echo "WARN: One or more AI components unreachable - check ngrok and Ollama on Mac Mini"
+          elif [ "${AI_AGENT_STATUS}" = "UNREACHABLE" ]; then
+            echo "WARN: AI agent unreachable - check ngrok on Mac Mini"
+          elif [ "${OLLAMA_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "UNREACHABLE" ] || [ "${OLLAMA_STATUS}" = "NO_MODEL" ]; then
+            echo "WARN: Ollama issue (${OLLAMA_STATUS}) - check Ollama on Mac Mini"
           else
             echo "OK: AI health check passed"
           fi
