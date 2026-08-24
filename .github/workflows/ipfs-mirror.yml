@@ -27,6 +27,12 @@ jobs:
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.VM_SSH_USER }}@${{ secrets.VM_IP }} << 'EOF'
             IPFS_BIN=/usr/local/bin/ipfs
 
+            echo "--- diagnostics ---"
+            systemctl is-active ipfs || true
+            (ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null) | grep -E ':5001|:4001' || echo "nothing listening on 5001/4001"
+            curl -s -m 5 -o /dev/null -w "API http status: %{http_code}\n" http://127.0.0.1:5001/api/v0/version -X POST || echo "curl to API failed"
+            echo "-------------------"
+
             CIDS=(
               "QmVMXPiiQSWFzX1qY2P4DxbenPZrFVu5FMmcg5MumrYtot"
               "QmUju1zDPgZxkRtu3vdR9uohiNdgRrx3Dgsgz3wSo7ETnx"
