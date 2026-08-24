@@ -35,7 +35,7 @@ jobs:
 
             for CID in "${CIDS[@]}"; do
               echo "Pinning $CID..."
-              if $IPFS_BIN pin add "$CID"; then
+              if $IPFS_BIN --api /ip4/127.0.0.1/tcp/5001 pin add "$CID"; then
                 echo "✅ Pinned $CID"
               else
                 echo "❌ Failed to pin $CID"
