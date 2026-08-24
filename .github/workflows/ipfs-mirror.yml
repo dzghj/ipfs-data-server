@@ -42,8 +42,8 @@ jobs:
             )
 
             for CID in "${CIDS[@]}"; do
-              echo "Pinning $CID..."
-              if timeout 120 $IPFS_BIN --api /ip4/127.0.0.1/tcp/5001 pin add "$CID"; then
+              echo "Pinning $CID (max 120s, progress below)..."
+              if timeout 120 $IPFS_BIN --api /ip4/127.0.0.1/tcp/5001 pin add --progress "$CID"; then
                 echo "✅ Pinned $CID"
               else
                 echo "❌ Failed to pin $CID"
