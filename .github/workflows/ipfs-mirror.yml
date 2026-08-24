@@ -24,7 +24,7 @@ jobs:
 
           # Run pinning commands on remote VM
           # IPFS daemon runs as a systemd service on the VM (always on)
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.VM_SSH_USER }}@${{ secrets.VM_IP }} << 'EOF'
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ${{ secrets.VM_SSH_USER }}@${{ secrets.VM_IP }} bash -s << 'EOF'
             IPFS_BIN=/usr/local/bin/ipfs
 
             echo "--- diagnostics ---"
