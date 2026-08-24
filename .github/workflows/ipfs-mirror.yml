@@ -10,6 +10,7 @@ jobs:
   ipfs-mirror:
     name: Pin IPFS CIDs on remote VM
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Pin CIDs via SSH
@@ -31,6 +32,7 @@ jobs:
             systemctl is-active ipfs || true
             (ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null) | grep -E ':5001|:4001' || echo "nothing listening on 5001/4001"
             curl -s -m 5 -o /dev/null -w "API http status: %{http_code}\n" http://127.0.0.1:5001/api/v0/version -X POST || echo "curl to API failed"
+            echo "Connected peers: $($IPFS_BIN --api /ip4/127.0.0.1/tcp/5001 swarm peers 2>/dev/null | wc -l)"
             echo "-------------------"
 
             CIDS=(
@@ -41,7 +43,7 @@ jobs:
 
             for CID in "${CIDS[@]}"; do
               echo "Pinning $CID..."
-              if $IPFS_BIN --api /ip4/127.0.0.1/tcp/5001 pin add "$CID"; then
+              if timeout 120 $IPFS_BIN --api /ip4/127.0.0.1/tcp/5001 pin add "$CID"; then
                 echo "✅ Pinned $CID"
               else
                 echo "❌ Failed to pin $CID"
