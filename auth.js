@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { Resend } from "resend";
+import { notifyAgent } from "./notifyAgent.js";
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET || "supersecret";
@@ -237,6 +238,8 @@ router.post("/login", async (req, res) => {
       SECRET,
       { expiresIn: "1d" }
     );
+
+    notifyAgent({ type: "user_login", userId: user.id, ip: req.ip });
 
     res.json({
       token,

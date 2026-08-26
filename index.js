@@ -13,6 +13,7 @@ import { secureUpload, secureView } from "./secure-share/index.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
 import { decrypt } from "./secure-share/crypto-utils.js";
 import { buildHealthPayload, isAuthorizedInternalRequest } from "./monitoring.js";
+import { notifyAgent, forwardGithubEvent } from "./notifyAgent.js";
 import crypto from "crypto";
 
 
@@ -54,6 +55,24 @@ app.get("/health", async (req, res) => {
       uptime: Math.round(process.uptime()),
       timestamp: new Date().toISOString(),
     }));
+  }
+});
+
+/* ===== GitHub Actions -> Backend -> ipfs-AI-control agent ===== */
+// GitHub Actions workflows can't reach the agent directly (Tailscale-only),
+// so they POST check results here and the backend relays them to the agent.
+app.post("/api/internal/github-event", async (req, res) => {
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const agentResult = await forwardGithubEvent(req.body);
+    res.json({ success: true, agent: agentResult });
+  } catch (err) {
+    console.error("Failed to forward GitHub event to agent:", err.message);
+    res.status(502).json({ success: false, message: err.message });
   }
 });
 
@@ -185,6 +204,8 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       uploadedAt: new Date(),
     });
 
+    notifyAgent({ type: "file_upload", userId: req.user.id, cid: result.cid, size: req.file.size });
+
     res.json({
       success: true,
       file: {
@@ -196,6 +217,7 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
 
   } catch (err) {
     console.error("Upload failed:", err);
+    notifyAgent({ type: "error", route: "/api/upload", message: err.message });
     res.status(500).json({ message: "Upload failed" });
   }
 });

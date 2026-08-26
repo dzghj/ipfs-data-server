@@ -92,17 +92,22 @@ jobs:
           fi
           echo "OK: Both core nodes healthy. Mac Mini: ${MACMINI_STATUS:-UNKNOWN}"
 
-      - name: Send SMS alert via Twilio on failure
-        if: failure()
+      - name: Forward results to backend (which relays to AI agent)
+        if: always()
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
-          FAILED=""
-          [ "${VM1_STATUS}" != "UP" ] && FAILED="VM1 "
-          [ "${VM2_STATUS}" != "UP" ] && FAILED="${FAILED}VM2 "
-          [ "${MACMINI_STATUS}" = "DOWN" ] && FAILED="${FAILED}MacMini"
-          curl -s -X POST \
-            "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
-            --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
-            --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
-            --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
-            --data-urlencode "Body=LegacyChain Cluster Alert: DOWN nodes: ${FAILED}. Peers: ${PEER_COUNT:-0}/3. See: https://github.com/${{ github.repository }}/actions"
-          echo "SMS sent"
+          if [ -z "$BACKEND_URL" ]; then
+            echo "BACKEND_URL secret not set - skipping backend/agent notify"
+            exit 0
+          fi
+          BACKEND_URL=$(echo "$BACKEND_URL" | sed 's|/$||')
+          STATUS="success"
+          [ "${VM1_STATUS}" != "UP" ] && STATUS="failure"
+          [ "${VM2_STATUS}" != "UP" ] && STATUS="failure"
+          curl -s --max-time 30 -X POST "$BACKEND_URL/api/internal/github-event" \
+            -H "x-internal-secret: $INTERNAL_API_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"workflow\":\"cluster-health\",\"status\":\"${STATUS}\",\"vm1\":\"${VM1_STATUS:-UNKNOWN}\",\"vm2\":\"${VM2_STATUS:-UNKNOWN}\",\"macmini\":\"${MACMINI_STATUS:-UNKNOWN}\",\"peer_count\":${PEER_COUNT:-0}}" \
+            || echo "WARN: could not reach backend"

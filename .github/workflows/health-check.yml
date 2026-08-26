@@ -63,17 +63,19 @@ jobs:
 
           echo "✅ Server and database are healthy"
 
-      - name: Send SMS alert via Twilio on failure
+      - name: Forward failure to backend (which relays to AI agent)
         if: failure()
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
-          echo "Sending SMS alert via Twilio..."
-
-          TWILIO_RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
-            -X POST \
-            "https://api.twilio.com/2010-04-01/Accounts/${{ secrets.TWILIO_ACCOUNT_SID }}/Messages.json" \
-            --user "${{ secrets.TWILIO_ACCOUNT_SID }}:${{ secrets.TWILIO_AUTH_TOKEN }}" \
-            --data-urlencode "To=${{ secrets.ALERT_PHONE_NUMBER }}" \
-            --data-urlencode "From=${{ secrets.TWILIO_FROM_NUMBER }}" \
-            --data-urlencode "Body=⚠️ LegacyChain Alert: Health check FAILED at $(date -u). Check: https://github.com/${{ github.repository }}/actions")
-
-          echo "Twilio response: $TWILIO_RESPONSE"
+          if [ -z "$BACKEND_URL" ]; then
+            echo "BACKEND_URL secret not set - skipping backend/agent notify"
+            exit 0
+          fi
+          BACKEND_URL=$(echo "$BACKEND_URL" | sed 's|/$||')
+          curl -s --max-time 30 -X POST "$BACKEND_URL/api/internal/github-event" \
+            -H "x-internal-secret: $INTERNAL_API_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"workflow\":\"health-check\",\"status\":\"failure\",\"repository\":\"${{ github.repository }}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            || echo "WARN: could not reach backend"
