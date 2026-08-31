@@ -7,13 +7,13 @@ import dotenv from "dotenv";
 import authRoutes, { auth } from "./auth.js";
 import jwt from "jsonwebtoken";
 import { Resend } from "resend";
-import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend } from "./db.js";
+import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent } from "./db.js";
 import { Op } from "sequelize";
 import { secureUpload, secureView } from "./secure-share/index.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
 import { decrypt } from "./secure-share/crypto-utils.js";
 import { buildHealthPayload, isAuthorizedInternalRequest } from "./monitoring.js";
-import { notifyAgent, forwardGithubEvent } from "./notifyAgent.js";
+import { notifyAgent, enqueueGithubEvent } from "./notifyAgent.js";
 import crypto from "crypto";
 
 
@@ -58,9 +58,16 @@ app.get("/health", async (req, res) => {
   }
 });
 
-/* ===== GitHub Actions -> Backend -> ipfs-AI-control agent ===== */
-// GitHub Actions workflows can't reach the agent directly (Tailscale-only),
-// so they POST check results here and the backend relays them to the agent.
+/* ===== ipfs-AI-control agent event queue ===== */
+// The agent runs on the Mac Mini (Tailscale-only, no public inbound), so it
+// pulls instead of being pushed to. GitHub Actions workflows and this server
+// enqueue events here; the agent polls GET /api/internal/agent/events, analyses
+// each with Ollama, and reports back to POST .../events/:id/result.
+//
+// Redelivery: an event handed out but not acked within AGENT_LEASE_MS is
+// offered again, so a crashed agent never loses events.
+const AGENT_LEASE_MS = Number(process.env.AGENT_LEASE_MS || 5 * 60 * 1000);
+
 app.post("/api/internal/github-event", async (req, res) => {
   const internalSecret = process.env.INTERNAL_API_SECRET;
   if (!isAuthorizedInternalRequest(req, internalSecret)) {
@@ -68,11 +75,77 @@ app.post("/api/internal/github-event", async (req, res) => {
   }
 
   try {
-    const agentResult = await forwardGithubEvent(req.body);
-    res.json({ success: true, agent: agentResult });
+    const result = await enqueueGithubEvent(req.body);
+    res.json({ success: true, ...result });
   } catch (err) {
-    console.error("Failed to forward GitHub event to agent:", err.message);
-    res.status(502).json({ success: false, message: err.message });
+    console.error("Failed to enqueue GitHub event:", err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Agent pulls pending events (and stale delivered ones), marking them delivered.
+app.get("/api/internal/agent/events", async (req, res) => {
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const staleCutoff = new Date(Date.now() - AGENT_LEASE_MS);
+
+  try {
+    const rows = await AgentEvent.findAll({
+      where: {
+        [Op.or]: [
+          { status: "pending" },
+          { status: "delivered", deliveredAt: { [Op.lt]: staleCutoff } },
+        ],
+      },
+      order: [["createdAt", "ASC"]],
+      limit,
+    });
+
+    const now = new Date();
+    await Promise.all(
+      rows.map((r) => r.update({ status: "delivered", deliveredAt: now }))
+    );
+
+    res.json({
+      events: rows.map((r) => ({
+        id: r.id,
+        source: r.source,
+        type: r.type,
+        payload: r.payload,
+        createdAt: r.createdAt,
+      })),
+    });
+  } catch (err) {
+    console.error("Agent event pull failed:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Agent reports its decision + outcome for one event.
+app.post("/api/internal/agent/events/:id/result", async (req, res) => {
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const row = await AgentEvent.findByPk(req.params.id);
+    if (!row) return res.status(404).json({ message: "Unknown event" });
+
+    await row.update({
+      status: "done",
+      decision: req.body?.decision ?? null,
+      outcome: req.body?.outcome ?? null,
+      processedAt: new Date(),
+    });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Agent result update failed:", err.message);
+    res.status(500).json({ message: err.message });
   }
 });
 

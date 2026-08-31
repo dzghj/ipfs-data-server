@@ -63,19 +63,38 @@ jobs:
 
           echo "✅ Server and database are healthy"
 
-      - name: Forward failure to backend (which relays to AI agent)
+      - name: Send SMS alert on failure (direct Twilio — no backend dependency)
         if: failure()
+        env:
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ALERT_PHONE_NUMBER: ${{ secrets.ALERT_PHONE_NUMBER }}
+        run: |
+          if [ -z "$TWILIO_ACCOUNT_SID" ] || [ -z "$ALERT_PHONE_NUMBER" ]; then
+            echo "Twilio secrets not set - skipping SMS"
+            exit 0
+          fi
+          curl -s -w "\nHTTP:%{http_code}\n" \
+            -X POST "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json" \
+            --user "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
+            --data-urlencode "To=${ALERT_PHONE_NUMBER}" \
+            --data-urlencode "From=${TWILIO_FROM_NUMBER}" \
+            --data-urlencode "Body=LegacyChain: backend/DB health check FAILED $(date -u '+%Y-%m-%d %H:%M UTC'). https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Forward result to AI agent queue
+        if: always()
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
           if [ -z "$BACKEND_URL" ]; then
-            echo "BACKEND_URL secret not set - skipping backend/agent notify"
+            echo "BACKEND_URL secret not set - skipping agent notify"
             exit 0
           fi
           BACKEND_URL=$(echo "$BACKEND_URL" | sed 's|/$||')
           curl -s --max-time 30 -X POST "$BACKEND_URL/api/internal/github-event" \
             -H "x-internal-secret: $INTERNAL_API_SECRET" \
             -H "Content-Type: application/json" \
-            -d "{\"workflow\":\"health-check\",\"status\":\"failure\",\"repository\":\"${{ github.repository }}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
-            || echo "WARN: could not reach backend"
+            -d "{\"workflow\":\"health-check\",\"status\":\"${{ job.status }}\",\"repository\":\"${{ github.repository }}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            || echo "WARN: could not reach backend (SMS path is independent)"

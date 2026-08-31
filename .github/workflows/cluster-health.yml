@@ -90,24 +90,51 @@ jobs:
             echo "FAIL: One or more core nodes are DOWN"
             exit 1
           fi
-          echo "OK: Both core nodes healthy. Mac Mini: ${MACMINI_STATUS:-UNKNOWN}"
+          if [ "${MACMINI_STATUS}" = "DOWN" ]; then
+            echo "FAIL: Mac Mini node is DOWN"
+            exit 1
+          fi
+          if [ "${MACMINI_STATUS}" != "UP" ]; then
+            echo "WARN: Mac Mini status ${MACMINI_STATUS:-UNKNOWN} (could not confirm via peer list)"
+          fi
+          echo "OK: All nodes healthy. Mac Mini: ${MACMINI_STATUS:-UNKNOWN}"
 
-      - name: Forward results to backend (which relays to AI agent)
+      - name: Send SMS alert on failure (direct Twilio — no backend dependency)
+        if: failure()
+        env:
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ALERT_PHONE_NUMBER: ${{ secrets.ALERT_PHONE_NUMBER }}
+        run: |
+          if [ -z "$TWILIO_ACCOUNT_SID" ] || [ -z "$ALERT_PHONE_NUMBER" ]; then
+            echo "Twilio secrets not set - skipping SMS"
+            exit 0
+          fi
+          curl -s -w "\nHTTP:%{http_code}\n" \
+            -X POST "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json" \
+            --user "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
+            --data-urlencode "To=${ALERT_PHONE_NUMBER}" \
+            --data-urlencode "From=${TWILIO_FROM_NUMBER}" \
+            --data-urlencode "Body=LegacyChain: IPFS node health check FAILED $(date -u '+%Y-%m-%d %H:%M UTC'). VM1=${VM1_STATUS:-UNKNOWN} VM2=${VM2_STATUS:-UNKNOWN} MacMini=${MACMINI_STATUS:-UNKNOWN} peers=${PEER_COUNT:-0}/3. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Forward result to AI agent queue
         if: always()
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
           if [ -z "$BACKEND_URL" ]; then
-            echo "BACKEND_URL secret not set - skipping backend/agent notify"
+            echo "BACKEND_URL secret not set - skipping agent notify"
             exit 0
           fi
           BACKEND_URL=$(echo "$BACKEND_URL" | sed 's|/$||')
           STATUS="success"
           [ "${VM1_STATUS}" != "UP" ] && STATUS="failure"
           [ "${VM2_STATUS}" != "UP" ] && STATUS="failure"
+          [ "${MACMINI_STATUS}" != "UP" ] && STATUS="failure"
           curl -s --max-time 30 -X POST "$BACKEND_URL/api/internal/github-event" \
             -H "x-internal-secret: $INTERNAL_API_SECRET" \
             -H "Content-Type: application/json" \
             -d "{\"workflow\":\"cluster-health\",\"status\":\"${STATUS}\",\"vm1\":\"${VM1_STATUS:-UNKNOWN}\",\"vm2\":\"${VM2_STATUS:-UNKNOWN}\",\"macmini\":\"${MACMINI_STATUS:-UNKNOWN}\",\"peer_count\":${PEER_COUNT:-0}}" \
-            || echo "WARN: could not reach backend"
+            || echo "WARN: could not reach backend (SMS path is independent)"

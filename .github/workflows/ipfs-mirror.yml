@@ -54,19 +54,19 @@ jobs:
             echo "✅ All CIDs pinned successfully"
           EOF
 
-      - name: Forward failure to backend (which relays to AI agent)
-        if: failure()
+      - name: Forward result to AI agent queue
+        if: always()
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
           if [ -z "$BACKEND_URL" ]; then
-            echo "BACKEND_URL secret not set - skipping backend/agent notify"
+            echo "BACKEND_URL secret not set - skipping agent notify"
             exit 0
           fi
           BACKEND_URL=$(echo "$BACKEND_URL" | sed 's|/$||')
           curl -s --max-time 30 -X POST "$BACKEND_URL/api/internal/github-event" \
             -H "x-internal-secret: $INTERNAL_API_SECRET" \
             -H "Content-Type: application/json" \
-            -d "{\"workflow\":\"ipfs-mirror\",\"status\":\"failure\",\"repository\":\"${{ github.repository }}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"workflow\":\"ipfs-mirror\",\"status\":\"${{ job.status }}\",\"repository\":\"${{ github.repository }}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             || echo "WARN: could not reach backend"

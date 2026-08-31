@@ -161,6 +161,25 @@ export const NomineeAccessSend = sequelize.define(
   { tableName: "NomineeAccessSends", schema: "public", timestamps: false }
 );
 
+/* ===== AgentEvents — queue of events for the ipfs-AI-control agent to pull ===== */
+
+export const AgentEvent = sequelize.define(
+  "AgentEvent",
+  {
+    id:        { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    source:    { type: DataTypes.STRING,  allowNull: false }, // "github" | "backend"
+    type:      { type: DataTypes.STRING,  allowNull: true  }, // workflow name or event type
+    payload:   { type: DataTypes.JSONB,   allowNull: false },
+    status:    { type: DataTypes.STRING,  allowNull: false, defaultValue: "pending" }, // pending | delivered | done
+    decision:  { type: DataTypes.JSONB,   allowNull: true }, // filled by the agent
+    outcome:   { type: DataTypes.JSONB,   allowNull: true }, // filled by the agent
+    createdAt:   { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
+    deliveredAt: { type: DataTypes.DATE, allowNull: true },
+    processedAt: { type: DataTypes.DATE, allowNull: true },
+  },
+  { tableName: "AgentEvents", schema: "public", timestamps: false }
+);
+
 /* ===== Init ===== */
 
 (async () => {
