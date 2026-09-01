@@ -180,6 +180,44 @@ export const AgentEvent = sequelize.define(
   { tableName: "AgentEvents", schema: "public", timestamps: false }
 );
 
+/* ===== Bootstrap DDL ===== */
+
+// sequelize.sync() is skipped in production, so tables added after the initial
+// deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS) — safe
+// to run on every boot. Mirrors migrations/001 + migrations/002; keep in sync
+// with the NomineeAccessSend and AgentEvent models above.
+const BOOTSTRAP_SQL = `
+  CREATE TABLE IF NOT EXISTS public."NomineeAccessSends" (
+    id           SERIAL PRIMARY KEY,
+    "nomineeId"  INTEGER NOT NULL,
+    "ownerId"    INTEGER NOT NULL,
+    token        TEXT NOT NULL,
+    "sendCount"  INTEGER NOT NULL DEFAULT 1,
+    "lastSentAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    "openedAt"   TIMESTAMP WITH TIME ZONE,
+    "createdAt"  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_nominee_access_sends_nominee_id
+    ON public."NomineeAccessSends" ("nomineeId");
+  CREATE INDEX IF NOT EXISTS idx_nominee_access_sends_send_count
+    ON public."NomineeAccessSends" ("sendCount", "lastSentAt");
+
+  CREATE TABLE IF NOT EXISTS public."AgentEvents" (
+    id            SERIAL PRIMARY KEY,
+    source        TEXT NOT NULL,
+    type          TEXT,
+    payload       JSONB NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    decision      JSONB,
+    outcome       JSONB,
+    "createdAt"   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    "deliveredAt" TIMESTAMP WITH TIME ZONE,
+    "processedAt" TIMESTAMP WITH TIME ZONE
+  );
+  CREATE INDEX IF NOT EXISTS idx_agent_events_status_created
+    ON public."AgentEvents" (status, "createdAt");
+`;
+
 /* ===== Init ===== */
 
 (async () => {
@@ -192,6 +230,8 @@ export const AgentEvent = sequelize.define(
     } else {
       console.log("🚫 Skipping sequelize.sync() in production");
     }
+    await sequelize.query(BOOTSTRAP_SQL);
+    console.log("✅ Bootstrap tables ensured (NomineeAccessSends, AgentEvents)");
   } catch (err) {
     console.error("❌ Database connection failed", err);
   }
