@@ -26,8 +26,8 @@ jobs:
           INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
           if [ -z "$BACKEND_URL" ]; then
-            echo "AI_AGENT_STATUS=SKIPPED" >> $GITHUB_ENV
-            echo "OLLAMA_STATUS=SKIPPED" >> $GITHUB_ENV
+            echo "AI_AGENT_STATUS=SKIPPED" >> "$GITHUB_ENV"
+            echo "OLLAMA_STATUS=SKIPPED" >> "$GITHUB_ENV"
             echo "BACKEND_URL secret not set - skipping"
             exit 0
           fi
@@ -47,32 +47,32 @@ jobs:
           echo
 
           if [ $CURL_EXIT -ne 0 ] || [ "$HTTP_CODE" != "200" ]; then
-            echo "AI_AGENT_STATUS=UNREACHABLE" >> $GITHUB_ENV
-            echo "OLLAMA_STATUS=UNKNOWN" >> $GITHUB_ENV
+            echo "AI_AGENT_STATUS=UNREACHABLE" >> "$GITHUB_ENV"
+            echo "OLLAMA_STATUS=UNKNOWN" >> "$GITHUB_ENV"
             echo "WARN: could not read heartbeat from backend (HTTP $HTTP_CODE)"
             exit 0
           fi
 
-          eval "$(python3 - <<'PY'
-import json
-try:
-    d = json.load(open("/tmp/hb.json"))
-except Exception as e:
-    print('AGENT=DOWN'); print('OLLAMA=UNKNOWN'); print('AGE=?'); raise SystemExit
-if not d.get("present"):
-    print('AGENT=DOWN'); print('OLLAMA=UNKNOWN'); print('AGE=none')
-else:
-    print(f"AGENT={'DOWN' if d.get('stale') else 'UP'}")
-    o = (d.get("ollama") or {}).get("status") or "UNKNOWN"
-    print(f"OLLAMA={o.upper()}")
-    print(f"AGE={d.get('ageSeconds','?')}")
-PY
-)"
+          PRESENT=$(jq -r '.present // false' /tmp/hb.json 2>/dev/null || echo false)
+          if [ "$PRESENT" != "true" ]; then
+            AGENT=DOWN
+            OLLAMA=UNKNOWN
+            AGE=none
+          else
+            STALE=$(jq -r '.stale // false' /tmp/hb.json 2>/dev/null || echo true)
+            if [ "$STALE" = "true" ]; then
+              AGENT=DOWN
+            else
+              AGENT=UP
+            fi
+            OLLAMA=$(jq -r '(.ollama.status // "unknown") | ascii_upcase' /tmp/hb.json 2>/dev/null || echo UNKNOWN)
+            AGE=$(jq -r '.ageSeconds // "?"' /tmp/hb.json 2>/dev/null || echo "?")
+          fi
 
           echo "Parsed: agent=$AGENT ollama=$OLLAMA age=${AGE}s"
-          echo "AI_AGENT_STATUS=$AGENT" >> $GITHUB_ENV
-          echo "OLLAMA_STATUS=$OLLAMA" >> $GITHUB_ENV
-          echo "HEARTBEAT_AGE=$AGE" >> $GITHUB_ENV
+          echo "AI_AGENT_STATUS=$AGENT" >> "$GITHUB_ENV"
+          echo "OLLAMA_STATUS=$OLLAMA" >> "$GITHUB_ENV"
+          echo "HEARTBEAT_AGE=$AGE" >> "$GITHUB_ENV"
 
       - name: Summary
         run: |
