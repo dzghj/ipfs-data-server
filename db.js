@@ -180,12 +180,30 @@ export const AgentEvent = sequelize.define(
   { tableName: "AgentEvents", schema: "public", timestamps: false }
 );
 
+/* ===== AgentHeartbeat — last-seen + Ollama status pushed by ipfs-AI-control ===== */
+
+// The agent (Mac Mini, Tailscale-only) can't be probed from GitHub's runners, so
+// instead it POSTs a heartbeat here every HEARTBEAT_INTERVAL_MS. The
+// ai-health-check workflow reads GET /api/internal/agent/heartbeat and alerts if
+// the row is stale. One row, keyed by name.
+export const AgentHeartbeat = sequelize.define(
+  "AgentHeartbeat",
+  {
+    name:         { type: DataTypes.STRING, primaryKey: true }, // "ipfs-ai-control"
+    ollamaStatus: { type: DataTypes.STRING, allowNull: true },  // "up" | "down" | "no_model"
+    ollamaModel:  { type: DataTypes.STRING, allowNull: true },
+    detail:       { type: DataTypes.JSONB,  allowNull: true },
+    lastSeenAt:   { type: DataTypes.DATE,   allowNull: false, defaultValue: Sequelize.NOW },
+  },
+  { tableName: "AgentHeartbeats", schema: "public", timestamps: false }
+);
+
 /* ===== Bootstrap DDL ===== */
 
 // sequelize.sync() is skipped in production, so tables added after the initial
 // deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS) — safe
-// to run on every boot. Mirrors migrations/001 + migrations/002; keep in sync
-// with the NomineeAccessSend and AgentEvent models above.
+// to run on every boot. Mirrors migrations/001 + migrations/002 + migrations/003;
+// keep in sync with the NomineeAccessSend, AgentEvent and AgentHeartbeat models above.
 const BOOTSTRAP_SQL = `
   CREATE TABLE IF NOT EXISTS public."NomineeAccessSends" (
     id           SERIAL PRIMARY KEY,
@@ -216,6 +234,14 @@ const BOOTSTRAP_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_agent_events_status_created
     ON public."AgentEvents" (status, "createdAt");
+
+  CREATE TABLE IF NOT EXISTS public."AgentHeartbeats" (
+    name           TEXT PRIMARY KEY,
+    "ollamaStatus" TEXT,
+    "ollamaModel"  TEXT,
+    detail         JSONB,
+    "lastSeenAt"   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  );
 `;
 
 /* ===== Init ===== */
@@ -231,7 +257,7 @@ const BOOTSTRAP_SQL = `
       console.log("🚫 Skipping sequelize.sync() in production");
     }
     await sequelize.query(BOOTSTRAP_SQL);
-    console.log("✅ Bootstrap tables ensured (NomineeAccessSends, AgentEvents)");
+    console.log("✅ Bootstrap tables ensured (NomineeAccessSends, AgentEvents, AgentHeartbeats)");
   } catch (err) {
     console.error("❌ Database connection failed", err);
   }

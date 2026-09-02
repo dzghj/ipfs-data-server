@@ -1,5 +1,14 @@
 name: AI Agent Health Check
 
+# The ipfs-AI-control agent runs on the Mac Mini (Tailscale-only, no public
+# inbound), so this runner can't probe it directly. Instead the agent POSTs an
+# outbound heartbeat to the backend every ~60s with its Ollama status; this
+# workflow just reads that heartbeat from the (public) backend and alerts if the
+# agent has gone quiet or Ollama is unhealthy. Nothing about the agent is
+# exposed to the internet.
+#
+# Required secrets: BACKEND_URL, INTERNAL_API_SECRET (+ Twilio secrets for SMS).
+
 on:
   schedule:
     - cron: "0 0 * * *"
@@ -7,106 +16,84 @@ on:
 
 jobs:
   ai-health:
-    name: Check AI agent server and local AI model
+    name: Check AI agent heartbeat and Ollama status
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check AI agent server health endpoint
+      - name: Read agent heartbeat from backend
         env:
-          AGENT_URL: ${{ secrets.AI_AGENT_HEALTH_URL }}
-          AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
         run: |
-          if [ -z "$AGENT_URL" ]; then
+          if [ -z "$BACKEND_URL" ]; then
             echo "AI_AGENT_STATUS=SKIPPED" >> $GITHUB_ENV
-            echo "AI_AGENT_HEALTH_URL secret not set - skipping"
-            exit 0
-          fi
-
-          # Strip trailing slash
-          AGENT_URL=$(echo "$AGENT_URL" | sed 's|/$||')
-          echo "Checking AI agent at $AGENT_URL/health ..."
-
-          HTTP_CODE=$(curl -s --max-time 15 \
-            -o /tmp/agent.json \
-            -w "%{http_code}" \
-            -H "X-Agent-Secret: $AGENT_SECRET" \
-            "$AGENT_URL/health")
-          CURL_EXIT=$?
-
-          echo "curl exit: $CURL_EXIT  HTTP status: $HTTP_CODE"
-          cat /tmp/agent.json 2>/dev/null || true
-
-          if [ $CURL_EXIT -ne 0 ] || [ "$HTTP_CODE" = "000" ]; then
-            echo "AI_AGENT_STATUS=UNREACHABLE" >> $GITHUB_ENV
-            echo "WARN: AI agent unreachable (curl exit $CURL_EXIT) - ngrok may not be running"
-          elif [ "$HTTP_CODE" = "200" ]; then
-            echo "AI_AGENT_STATUS=UP" >> $GITHUB_ENV
-            echo "OK: AI agent is UP"
-          else
-            echo "AI_AGENT_STATUS=DOWN" >> $GITHUB_ENV
-            echo "FAIL: AI agent DOWN (HTTP $HTTP_CODE)"
-          fi
-
-      - name: Check Ollama model is loaded
-        env:
-          AGENT_URL: ${{ secrets.AI_AGENT_HEALTH_URL }}
-          AGENT_SECRET: ${{ secrets.AGENT_SECRET }}
-        run: |
-          if [ -z "$AGENT_URL" ]; then
             echo "OLLAMA_STATUS=SKIPPED" >> $GITHUB_ENV
-            echo "Ollama check skipped - no URL configured"
+            echo "BACKEND_URL secret not set - skipping"
             exit 0
           fi
 
-          # Strip trailing slash
-          TARGET_URL=$(echo "$AGENT_URL" | sed 's|/$||')
-          echo "Checking Ollama via $TARGET_URL/api/tags ..."
+          BACKEND_URL=$(echo "$BACKEND_URL" | sed 's|/$||')
+          echo "Reading $BACKEND_URL/api/internal/agent/heartbeat ..."
 
-          HTTP_CODE=$(curl -s --max-time 15 \
-            -o /tmp/ollama.json \
+          HTTP_CODE=$(curl -s --max-time 20 \
+            -o /tmp/hb.json \
             -w "%{http_code}" \
-            -H "X-Agent-Secret: $AGENT_SECRET" \
-            "$TARGET_URL/api/tags")
+            -H "x-internal-secret: $INTERNAL_API_SECRET" \
+            "$BACKEND_URL/api/internal/agent/heartbeat")
           CURL_EXIT=$?
 
           echo "curl exit: $CURL_EXIT  HTTP status: $HTTP_CODE"
+          cat /tmp/hb.json 2>/dev/null || echo "(no body)"
+          echo
 
-          if [ $CURL_EXIT -ne 0 ] || [ "$HTTP_CODE" = "000" ]; then
-            echo "OLLAMA_STATUS=UNREACHABLE" >> $GITHUB_ENV
-            echo "WARN: Ollama unreachable (curl exit $CURL_EXIT)"
-          elif [ "$HTTP_CODE" != "200" ]; then
-            echo "OLLAMA_STATUS=DOWN" >> $GITHUB_ENV
-            echo "FAIL: Ollama not responding (HTTP $HTTP_CODE)"
-          else
-            MODEL_FOUND=$(python3 -c 'import json; d=json.load(open("/tmp/ollama.json")); print("YES" if any("llama3" in m.get("name","") for m in d.get("models",[])) else "NO")' 2>/dev/null || echo "UNKNOWN")
-            echo "Model found: $MODEL_FOUND"
-            if [ "$MODEL_FOUND" = "YES" ]; then
-              echo "OLLAMA_STATUS=UP" >> $GITHUB_ENV
-              echo "OK: Ollama UP and llama3 loaded"
-            else
-              echo "OLLAMA_STATUS=NO_MODEL" >> $GITHUB_ENV
-              echo "WARN: Ollama UP but llama3 not found - run: ollama pull llama3.2"
-            fi
+          if [ $CURL_EXIT -ne 0 ] || [ "$HTTP_CODE" != "200" ]; then
+            echo "AI_AGENT_STATUS=UNREACHABLE" >> $GITHUB_ENV
+            echo "OLLAMA_STATUS=UNKNOWN" >> $GITHUB_ENV
+            echo "WARN: could not read heartbeat from backend (HTTP $HTTP_CODE)"
+            exit 0
           fi
+
+          eval "$(python3 - <<'PY'
+import json
+try:
+    d = json.load(open("/tmp/hb.json"))
+except Exception as e:
+    print('AGENT=DOWN'); print('OLLAMA=UNKNOWN'); print('AGE=?'); raise SystemExit
+if not d.get("present"):
+    print('AGENT=DOWN'); print('OLLAMA=UNKNOWN'); print('AGE=none')
+else:
+    print(f"AGENT={'DOWN' if d.get('stale') else 'UP'}")
+    o = (d.get("ollama") or {}).get("status") or "UNKNOWN"
+    print(f"OLLAMA={o.upper()}")
+    print(f"AGE={d.get('ageSeconds','?')}")
+PY
+)"
+
+          echo "Parsed: agent=$AGENT ollama=$OLLAMA age=${AGE}s"
+          echo "AI_AGENT_STATUS=$AGENT" >> $GITHUB_ENV
+          echo "OLLAMA_STATUS=$OLLAMA" >> $GITHUB_ENV
+          echo "HEARTBEAT_AGE=$AGE" >> $GITHUB_ENV
 
       - name: Summary
         run: |
           echo "====== AI Health Summary ======"
-          echo "AI Agent: ${AI_AGENT_STATUS:-SKIPPED}"
+          echo "AI Agent: ${AI_AGENT_STATUS:-SKIPPED} (last heartbeat ${HEARTBEAT_AGE:-?}s ago)"
           echo "Ollama:   ${OLLAMA_STATUS:-SKIPPED}"
           echo "==============================="
           if [ "${AI_AGENT_STATUS}" = "DOWN" ]; then
-            echo "FAIL: AI agent is down"
+            echo "FAIL: AI agent is down (no recent heartbeat) - check the Mac Mini"
             exit 1
           elif [ "${AI_AGENT_STATUS}" = "UNREACHABLE" ]; then
-            echo "WARN: AI agent unreachable - check ngrok on Mac Mini"
-          elif [ "${OLLAMA_STATUS}" = "DOWN" ] || [ "${OLLAMA_STATUS}" = "UNREACHABLE" ] || [ "${OLLAMA_STATUS}" = "NO_MODEL" ]; then
-            echo "WARN: Ollama issue (${OLLAMA_STATUS}) - check Ollama on Mac Mini"
+            echo "WARN: could not reach backend to read heartbeat"
+          elif [ "${OLLAMA_STATUS}" = "DOWN" ]; then
+            echo "WARN: Ollama down on the Mac Mini"
+          elif [ "${OLLAMA_STATUS}" = "NO_MODEL" ]; then
+            echo "WARN: Ollama up but model missing - run: ollama pull llama3.2"
           else
             echo "OK: AI health check passed"
           fi
 
-      - name: Send SMS alert on failure (direct Twilio — no backend dependency)
+      - name: Send SMS alert on failure (direct Twilio - no backend dependency)
         if: failure()
         env:
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}

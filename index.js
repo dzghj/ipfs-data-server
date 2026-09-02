@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 import authRoutes, { auth } from "./auth.js";
 import jwt from "jsonwebtoken";
 import { Resend } from "resend";
-import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent } from "./db.js";
+import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat } from "./db.js";
 import { Op } from "sequelize";
 import { secureUpload, secureView } from "./secure-share/index.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
@@ -145,6 +145,64 @@ app.post("/api/internal/agent/events/:id/result", async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error("Agent result update failed:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ===== ipfs-AI-control agent heartbeat ===== */
+// The agent is Tailscale-only, so GitHub's runners can't probe it directly.
+// Instead it POSTs here every HEARTBEAT_INTERVAL_MS with its Ollama status, and
+// the ai-health-check workflow reads GET .../heartbeat and alerts if it's stale.
+const AGENT_NAME = "ipfs-ai-control";
+const AGENT_HEARTBEAT_STALE_MS = Number(process.env.AGENT_HEARTBEAT_STALE_MS || 10 * 60 * 1000);
+
+app.post("/api/internal/agent/heartbeat", async (req, res) => {
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const now = new Date();
+    await AgentHeartbeat.upsert({
+      name: AGENT_NAME,
+      ollamaStatus: req.body?.ollama ?? null,
+      ollamaModel: req.body?.model ?? null,
+      detail: req.body?.detail ?? null,
+      lastSeenAt: now,
+    });
+    res.json({ success: true, lastSeenAt: now.toISOString() });
+  } catch (err) {
+    console.error("Agent heartbeat update failed:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get("/api/internal/agent/heartbeat", async (req, res) => {
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const row = await AgentHeartbeat.findByPk(AGENT_NAME);
+    if (!row) {
+      return res.json({ present: false, agent: "UNKNOWN", ollama: null });
+    }
+    const ageMs = Date.now() - new Date(row.lastSeenAt).getTime();
+    const stale = ageMs > AGENT_HEARTBEAT_STALE_MS;
+    res.json({
+      present: true,
+      agent: stale ? "DOWN" : "UP",
+      stale,
+      ageSeconds: Math.round(ageMs / 1000),
+      staleThresholdSeconds: Math.round(AGENT_HEARTBEAT_STALE_MS / 1000),
+      lastSeenAt: new Date(row.lastSeenAt).toISOString(),
+      ollama: { status: row.ollamaStatus, model: row.ollamaModel },
+      detail: row.detail ?? null,
+    });
+  } catch (err) {
+    console.error("Agent heartbeat read failed:", err.message);
     res.status(500).json({ message: err.message });
   }
 });

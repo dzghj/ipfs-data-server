@@ -36,6 +36,7 @@ No `.env.example` exists in this repo — check with the team for required value
 **Scheduled jobs, two overlapping systems:**
 - Render's own `resend-cron` service (`render.yaml`, hourly) runs `cron-runner.js` → `POST /api/internal/run-resend-check`.
 - GitHub Actions (`.github/workflows/*.yml`) independently also hits `nominee-resend.yml` → the same endpoint, plus separate workflows for `health-check`, `cluster-health`, `ai-health-check`, `ipfs-mirror`, `gcp-ipfs-backup` that aren't represented in `render.yaml` at all — they poll the backend/VMs directly and forward results to `/api/internal/github-event`, which `notifyAgent.js`'s `forwardGithubEvent()` relays to the separate `ipfs-AI-control` agent (Tailscale-only, can't be reached directly from GitHub's runners). If you're debugging a duplicate-alert or missed-alert issue around nominee resends, check both cron paths, not just one.
+- `ai-health-check.yml` is the exception that does **not** poll anything directly: the agent is Tailscale-only, so it POSTs an outbound heartbeat to `POST /api/internal/agent/heartbeat` (upserts the single-row `AgentHeartbeats` table, `db.js`) every ~60s, and the workflow just reads `GET /api/internal/agent/heartbeat` and fails if the row is stale (`AGENT_HEARTBEAT_STALE_MS`, default 10 min) or Ollama is unhealthy. Both endpoints are `x-internal-secret`-gated like the other `/api/internal/agent/*` routes.
 
 **Root-level `fix-*.py`/`setup-*.sh`/`update-bootstrap.py`/`com.ipfs.cluster.plist`** are local-only, gitignored ops scripts for patching IPFS Cluster config directly on VM1/VM2/the Mac Mini (bootstrap peers, listen addrs) — not part of the deployed app, not run in CI. `cron-runner.js` is the one root script that *is* part of the app (Render's cron entrypoint).
 
@@ -44,3 +45,5 @@ No `.env.example` exists in this repo — check with the team for required value
 **Auth**: JWT via `jsonwebtoken`, secret is `process.env.JWT_SECRET || "supersecret"` (`auth.js`) — the hardcoded fallback is a real risk if `JWT_SECRET` is ever unset in a deployed environment. `notifyAgent({type:"user_login",...})` fires (fire-and-forget) only on successful login in `auth.js`; the `/api/upload` route in `index.js` separately fires `file_upload` and `error` events the same way (see `ipfs-AI-control`'s CLAUDE.md for the receiving side).
 
 **Vestigial dependencies**: `ethers`, `web3.storage`, `nodemailer`, and `twilio` are either in `package.json` or referenced by `.env` var names with no actual call sites in the current code (`resend` is what's actually used for email; nothing sends SMS despite Twilio env vars existing) — don't assume a feature exists just because its dependency or env var is present.
+** login mac mini 
+ssh david@100.73.92.84
