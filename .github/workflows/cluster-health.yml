@@ -1,103 +1,157 @@
 name: IPFS Cluster Health Check
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Checks the 3-node IPFS Cluster.
+#
+# GitHub's runners can only reach the two GCP VMs (public IPs, port 9199 = a
+# basic-auth reverse proxy in front of the cluster REST API — NOT the raw :9094
+# from .kiro/specs, which is bound to localhost/Tailscale only). The Mac Mini
+# has no public inbound, so it is checked INDIRECTLY: does its peer ID appear in
+# VM1's — or, if VM1 is unreachable, VM2's — cluster peer list?
+#
+# Scope: this proves cluster *membership* (and, via the peer's `error` /
+# `ipfs.error` fields, a shallow daemon check). That the Mac Mini's IPFS daemon
+# is actually serving content, and that the ipfs-AI-control agent is alive, are
+# covered separately by ai-health-check.yml (the agent's outbound heartbeat).
+#
+# Config — Settings → Secrets and variables → Actions:
+#   secrets : CLUSTER_API_USER, CLUSTER_API_PASSWORD,
+#             BACKEND_URL, INTERNAL_API_SECRET,
+#             TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, ALERT_PHONE_NUMBER
+#   vars    : VM1_CLUSTER_HOST, VM2_CLUSTER_HOST, MACMINI_PEER_ID
+#             All three are optional and fall back to the baked-in defaults
+#             below — but those defaults go stale whenever a VM's public IP
+#             changes or the Mac Mini's cluster identity (identity.json) is
+#             regenerated. Prefer setting the Actions *variables* so an update
+#             needs no commit; the job logs a warning while a default is in use.
+# ─────────────────────────────────────────────────────────────────────────────
+
 on:
   schedule:
-    # Runs every 12 hours
     - cron: "0 */12 * * *"
   workflow_dispatch:
+
+permissions: {}
 
 jobs:
   cluster-health:
     name: Check all 3 cluster nodes are online
     runs-on: ubuntu-latest
+    env:
+      VM1_HOST: ${{ vars.VM1_CLUSTER_HOST || '136.117.221.35' }}
+      VM2_HOST: ${{ vars.VM2_CLUSTER_HOST || '34.148.116.154' }}
+      CLUSTER_PORT: "9199"
+      MACMINI_PEER_ID: ${{ vars.MACMINI_PEER_ID || '12D3KooWFoF' }}
+      MACMINI_PEER_ID_DEFAULT: "12D3KooWFoF"
+      CLUSTER_API_USER: ${{ secrets.CLUSTER_API_USER }}
+      CLUSTER_API_PASSWORD: ${{ secrets.CLUSTER_API_PASSWORD }}
 
     steps:
-      - name: Check VM1 - instance-ipfs-main-server (136.117.221.35)
+      - name: Probe all three nodes
         run: |
-          echo "Checking VM1 at 136.117.221.35:9199..."
-          RESPONSE=$(curl -s --max-time 15 \
-            -o /tmp/vm1.json \
-            -w "%{http_code}" \
-            -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
-            http://136.117.221.35:9199/id)
-          echo "VM1 HTTP status: $RESPONSE"
-          cat /tmp/vm1.json 2>/dev/null || true
-          if [ "$RESPONSE" != "200" ]; then
-            echo "VM1_STATUS=DOWN" >> $GITHUB_ENV
-            echo "FAIL: VM1 (136.117.221.35) is DOWN (HTTP $RESPONSE)"
-            exit 1
-          else
-            PEER_ID=$(cat /tmp/vm1.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id","unknown")[:30])' 2>/dev/null || echo "unknown")
-            echo "VM1_STATUS=UP" >> $GITHUB_ENV
-            echo "OK: VM1 is UP — peer: $PEER_ID"
-          fi
+          # No `set -e` — a failed probe is data (recorded as DOWN/UNKNOWN), not
+          # a reason to skip the Evaluate step. Every command has an explicit
+          # fallback.
 
-      - name: Check VM2 - ipfs-second-server (34.148.116.154)
-        run: |
-          echo "Checking VM2 at 34.148.116.154:9199..."
-          RESPONSE=$(curl -s --max-time 15 \
-            -o /tmp/vm2.json \
-            -w "%{http_code}" \
-            -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
-            http://34.148.116.154:9199/id)
-          echo "VM2 HTTP status: $RESPONSE"
-          cat /tmp/vm2.json 2>/dev/null || true
-          if [ "$RESPONSE" != "200" ]; then
-            echo "VM2_STATUS=DOWN" >> $GITHUB_ENV
-            echo "FAIL: VM2 (34.148.116.154) is DOWN (HTTP $RESPONSE)"
-            exit 1
-          else
-            PEER_ID=$(cat /tmp/vm2.json | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id","unknown")[:30])' 2>/dev/null || echo "unknown")
-            echo "VM2_STATUS=UP" >> $GITHUB_ENV
-            echo "OK: VM2 is UP — peer: $PEER_ID"
-          fi
-
-      - name: Check Mac Mini node (via peer list on VM1)
-        run: |
-          echo "Checking Mac Mini via peer list from VM1..."
-          RESPONSE=$(curl -s --max-time 15 \
-            -o /tmp/peers.json \
-            -w "%{http_code}" \
-            -u "${{ secrets.CLUSTER_API_USER }}:${{ secrets.CLUSTER_API_PASSWORD }}" \
-            http://136.117.221.35:9199/peers)
-          echo "Peers HTTP status: $RESPONSE"
-          if [ "$RESPONSE" != "200" ]; then
-            echo "MACMINI_STATUS=UNKNOWN" >> $GITHUB_ENV
-            echo "PEER_COUNT=0" >> $GITHUB_ENV
-            echo "Could not fetch peer list from VM1"
-          else
-            PEER_COUNT=$(cat /tmp/peers.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo "0")
-            echo "PEER_COUNT=$PEER_COUNT" >> $GITHUB_ENV
-            echo "Total peers visible from VM1: $PEER_COUNT"
-            MAC_ONLINE=$(cat /tmp/peers.json | python3 -c 'import json,sys; peers=json.load(sys.stdin); mac=[p for p in peers if p.get("id","").startswith("12D3KooWFoF")]; print("UP" if mac else "DOWN")' 2>/dev/null || echo "UNKNOWN")
-            echo "MACMINI_STATUS=$MAC_ONLINE" >> $GITHUB_ENV
-            if [ "$MAC_ONLINE" = "UP" ]; then
-              echo "OK: Mac Mini is UP"
-            else
-              echo "WARN: Mac Mini appears DOWN (peer 12D3KooWFoF... not found)"
+          # Probe a VM's local cluster peer via /id. Echoes UP | DEGRADED | DOWN.
+          # DEGRADED = cluster process answers but its IPFS daemon reports an error.
+          probe_vm () {
+            local label="$1" host="$2" code err
+            code=$(curl -s --max-time 15 -o "/tmp/${label}.json" -w "%{http_code}" \
+              -u "$CLUSTER_API_USER:$CLUSTER_API_PASSWORD" \
+              "http://${host}:${CLUSTER_PORT}/id" || echo 000)
+            echo "  ${label}  ${host}:${CLUSTER_PORT}/id → HTTP ${code}" >&2
+            if [ "$code" != "200" ]; then echo DOWN; return; fi
+            err=$(jq -r '.ipfs.error // ""' "/tmp/${label}.json" 2>/dev/null || echo "")
+            if [ -n "$err" ]; then
+              echo "    ${label} ipfs.error: ${err}" >&2
+              echo DEGRADED; return
             fi
+            echo UP
+          }
+
+          VM1_STATUS=$(probe_vm vm1 "$VM1_HOST")
+          VM2_STATUS=$(probe_vm vm2 "$VM2_HOST")
+          echo "VM1=${VM1_STATUS}  VM2=${VM2_STATUS}"
+
+          # ---- Mac Mini: read the peer list from VM1, fall back to VM2 ----
+          PEER_SOURCE=none
+          PEER_CODE=000
+          for pair in "vm1:${VM1_HOST}" "vm2:${VM2_HOST}"; do
+            src=${pair%%:*}; host=${pair#*:}
+            PEER_CODE=$(curl -s --max-time 15 -o /tmp/peers.json -w "%{http_code}" \
+              -u "$CLUSTER_API_USER:$CLUSTER_API_PASSWORD" \
+              "http://${host}:${CLUSTER_PORT}/peers" || echo 000)
+            if [ "$PEER_CODE" = "200" ]; then PEER_SOURCE=$src; break; fi
+            echo "  peer list via ${src} (${host}) unavailable (HTTP ${PEER_CODE})"
+          done
+
+          if [ "$PEER_SOURCE" = none ]; then
+            MACMINI_STATUS=UNKNOWN
+            PEER_COUNT=0
+            echo "::warning::peer list unavailable from BOTH VM1 and VM2 — Mac Mini status unknown"
+          else
+            PEER_COUNT=$(jq 'length' /tmp/peers.json 2>/dev/null || echo 0)
+            # Match the Mac Mini by cluster peer ID, IPFS peer ID, or peername
+            # (MACMINI_PEER_ID may be a full ID or just a prefix). UP unless the
+            # matched peer reports a cluster- or ipfs-level error → DEGRADED.
+            MACMINI_STATUS=$(jq -r --arg w "$MACMINI_PEER_ID" '
+              [ .[] | select(
+                  ((.id // "")      | startswith($w)) or
+                  ((.ipfs.id // "") | startswith($w)) or
+                  ((.peername // "") == $w)
+                ) ] as $hit
+              | if   ($hit | length) == 0                       then "DOWN"
+                elif (($hit[0].error // "") != "")
+                  or (($hit[0].ipfs.error // "") != "")          then "DEGRADED"
+                else "UP" end
+            ' /tmp/peers.json 2>/dev/null || echo UNKNOWN)
+            echo "  peer list source: ${PEER_SOURCE}   peers: ${PEER_COUNT}   mac mini: ${MACMINI_STATUS}"
           fi
 
-      - name: Summary
+          if [ "$MACMINI_PEER_ID" = "$MACMINI_PEER_ID_DEFAULT" ]; then
+            echo "::warning::MACMINI_PEER_ID is not set as an Actions variable — using the baked-in prefix '${MACMINI_PEER_ID_DEFAULT}'. If the Mac Mini's cluster identity was regenerated this check silently reports DOWN; set the 'MACMINI_PEER_ID' repo variable to its current peer ID."
+          fi
+
+          {
+            echo "VM1_STATUS=${VM1_STATUS}"
+            echo "VM2_STATUS=${VM2_STATUS}"
+            echo "MACMINI_STATUS=${MACMINI_STATUS}"
+            echo "PEER_COUNT=${PEER_COUNT}"
+            echo "PEER_SOURCE=${PEER_SOURCE}"
+          } >> "$GITHUB_ENV"
+
+      - name: Evaluate
         run: |
-          echo "====== IPFS Cluster Health ======"
-          echo "VM1   (136.117.221.35): ${VM1_STATUS:-UNKNOWN}"
-          echo "VM2   (34.148.116.154):  ${VM2_STATUS:-UNKNOWN}"
-          echo "Mac Mini:               ${MACMINI_STATUS:-UNKNOWN}"
-          echo "Peers online: ${PEER_COUNT:-0} / 3"
-          echo "================================="
-          if [ "${VM1_STATUS}" != "UP" ] || [ "${VM2_STATUS}" != "UP" ]; then
-            echo "FAIL: One or more core nodes are DOWN"
+          echo "════════ IPFS Cluster Health ════════"
+          echo "  VM1 (${VM1_HOST}): ${VM1_STATUS:-UNKNOWN}"
+          echo "  VM2 (${VM2_HOST}): ${VM2_STATUS:-UNKNOWN}"
+          echo "  Mac Mini:          ${MACMINI_STATUS:-UNKNOWN}  (peer list via ${PEER_SOURCE:-none})"
+          echo "  Peers visible:     ${PEER_COUNT:-0} / 3"
+          echo "════════════════════════════════════"
+
+          FAIL=0
+          for vm in VM1 VM2; do
+            var="${vm}_STATUS"; s="${!var:-UNKNOWN}"
+            case "$s" in
+              UP)       ;;
+              DEGRADED) echo "::error::${vm} cluster is up but its IPFS daemon is erroring"; FAIL=1 ;;
+              *)        echo "::error::${vm} is ${s}"; FAIL=1 ;;
+            esac
+          done
+
+          case "${MACMINI_STATUS:-UNKNOWN}" in
+            UP)       ;;
+            DEGRADED) echo "::warning::Mac Mini peer is present but reporting an error" ;;
+            UNKNOWN)  echo "::warning::Mac Mini status undetermined — no peer list from VM1 or VM2" ;;
+            *)        echo "::error::Mac Mini node is DOWN (not in the peer list from ${PEER_SOURCE:-none})"; FAIL=1 ;;
+          esac
+
+          if [ "$FAIL" = 0 ]; then
+            echo "OK: all core nodes healthy. Mac Mini: ${MACMINI_STATUS:-UNKNOWN}"
+          else
             exit 1
           fi
-          if [ "${MACMINI_STATUS}" = "DOWN" ]; then
-            echo "FAIL: Mac Mini node is DOWN"
-            exit 1
-          fi
-          if [ "${MACMINI_STATUS}" != "UP" ]; then
-            echo "WARN: Mac Mini status ${MACMINI_STATUS:-UNKNOWN} (could not confirm via peer list)"
-          fi
-          echo "OK: All nodes healthy. Mac Mini: ${MACMINI_STATUS:-UNKNOWN}"
 
       - name: Send SMS alert on failure (direct Twilio — no backend dependency)
         if: failure()
@@ -116,7 +170,7 @@ jobs:
             --user "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
             --data-urlencode "To=${ALERT_PHONE_NUMBER}" \
             --data-urlencode "From=${TWILIO_FROM_NUMBER}" \
-            --data-urlencode "Body=LegacyChain: IPFS node health check FAILED $(date -u '+%Y-%m-%d %H:%M UTC'). VM1=${VM1_STATUS:-UNKNOWN} VM2=${VM2_STATUS:-UNKNOWN} MacMini=${MACMINI_STATUS:-UNKNOWN} peers=${PEER_COUNT:-0}/3. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --data-urlencode "Body=LegacyChain: IPFS cluster health FAILED $(date -u '+%Y-%m-%d %H:%M UTC'). VM1=${VM1_STATUS:-UNKNOWN} VM2=${VM2_STATUS:-UNKNOWN} MacMini=${MACMINI_STATUS:-UNKNOWN} peers=${PEER_COUNT:-0}/3 (via ${PEER_SOURCE:-none}). https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Forward result to AI agent queue
         if: always()
@@ -130,11 +184,11 @@ jobs:
           fi
           BACKEND_URL=$(echo "$BACKEND_URL" | sed 's|/$||')
           STATUS="success"
-          [ "${VM1_STATUS}" != "UP" ] && STATUS="failure"
-          [ "${VM2_STATUS}" != "UP" ] && STATUS="failure"
-          [ "${MACMINI_STATUS}" != "UP" ] && STATUS="failure"
+          case "${VM1_STATUS:-UNKNOWN}"    in UP) ;; *) STATUS="failure" ;; esac
+          case "${VM2_STATUS:-UNKNOWN}"    in UP) ;; *) STATUS="failure" ;; esac
+          case "${MACMINI_STATUS:-UNKNOWN}" in UP|DEGRADED|UNKNOWN) ;; *) STATUS="failure" ;; esac
           curl -s --max-time 30 -X POST "$BACKEND_URL/api/internal/github-event" \
             -H "x-internal-secret: $INTERNAL_API_SECRET" \
             -H "Content-Type: application/json" \
-            -d "{\"workflow\":\"cluster-health\",\"status\":\"${STATUS}\",\"vm1\":\"${VM1_STATUS:-UNKNOWN}\",\"vm2\":\"${VM2_STATUS:-UNKNOWN}\",\"macmini\":\"${MACMINI_STATUS:-UNKNOWN}\",\"peer_count\":${PEER_COUNT:-0}}" \
+            -d "{\"workflow\":\"cluster-health\",\"status\":\"${STATUS}\",\"vm1\":\"${VM1_STATUS:-UNKNOWN}\",\"vm2\":\"${VM2_STATUS:-UNKNOWN}\",\"macmini\":\"${MACMINI_STATUS:-UNKNOWN}\",\"peer_count\":${PEER_COUNT:-0},\"peer_source\":\"${PEER_SOURCE:-none}\"}" \
             || echo "WARN: could not reach backend (SMS path is independent)"
