@@ -65,8 +65,11 @@ app.get("/health", async (req, res) => {
 // each with Ollama, and reports back to POST .../events/:id/result.
 //
 // Redelivery: an event handed out but not acked within AGENT_LEASE_MS is
-// offered again, so a crashed agent never loses events.
+// offered again, so a crashed agent never loses events — but only up to
+// AGENT_MAX_ATTEMPTS hand-outs, after which it's marked "dead" (poison pill)
+// instead of looping forever.
 const AGENT_LEASE_MS = Number(process.env.AGENT_LEASE_MS || 5 * 60 * 1000);
+const AGENT_MAX_ATTEMPTS = Number(process.env.AGENT_MAX_ATTEMPTS || 5);
 
 app.post("/api/internal/github-event", async (req, res) => {
   const internalSecret = process.env.INTERNAL_API_SECRET;
@@ -94,11 +97,32 @@ app.get("/api/internal/agent/events", async (req, res) => {
   const staleCutoff = new Date(Date.now() - AGENT_LEASE_MS);
 
   try {
+    // Reap poison events first: leased, lease expired, and already handed out
+    // AGENT_MAX_ATTEMPTS times without an ack. Stop re-offering them.
+    await AgentEvent.update(
+      {
+        status: "dead",
+        lastError: `no result after ${AGENT_MAX_ATTEMPTS} delivery attempts`,
+        processedAt: new Date(),
+      },
+      {
+        where: {
+          status: "delivered",
+          deliveredAt: { [Op.lt]: staleCutoff },
+          attempts: { [Op.gte]: AGENT_MAX_ATTEMPTS },
+        },
+      }
+    );
+
     const rows = await AgentEvent.findAll({
       where: {
         [Op.or]: [
           { status: "pending" },
-          { status: "delivered", deliveredAt: { [Op.lt]: staleCutoff } },
+          {
+            status: "delivered",
+            deliveredAt: { [Op.lt]: staleCutoff },
+            attempts: { [Op.lt]: AGENT_MAX_ATTEMPTS },
+          },
         ],
       },
       order: [["createdAt", "ASC"]],
@@ -107,7 +131,9 @@ app.get("/api/internal/agent/events", async (req, res) => {
 
     const now = new Date();
     await Promise.all(
-      rows.map((r) => r.update({ status: "delivered", deliveredAt: now }))
+      rows.map((r) =>
+        r.update({ status: "delivered", deliveredAt: now, attempts: r.attempts + 1 })
+      )
     );
 
     res.json({
@@ -116,6 +142,7 @@ app.get("/api/internal/agent/events", async (req, res) => {
         source: r.source,
         type: r.type,
         payload: r.payload,
+        attempts: r.attempts,
         createdAt: r.createdAt,
       })),
     });
@@ -136,15 +163,56 @@ app.post("/api/internal/agent/events/:id/result", async (req, res) => {
     const row = await AgentEvent.findByPk(req.params.id);
     if (!row) return res.status(404).json({ message: "Unknown event" });
 
+    const decision = req.body?.decision ?? null;
+    const outcome = req.body?.outcome ?? null;
+    // The agent posts a result even when the brain threw or the action failed
+    // (decision null / outcome.success === false) — record that as "failed", not "done".
+    const failed = decision === null || outcome?.success === false;
+
     await row.update({
-      status: "done",
-      decision: req.body?.decision ?? null,
-      outcome: req.body?.outcome ?? null,
+      status: failed ? "failed" : "done",
+      decision,
+      outcome,
+      lastError: failed
+        ? String(outcome?.message ?? "agent reported failure").slice(0, 500)
+        : null,
       processedAt: new Date(),
     });
-    res.json({ success: true });
+    res.json({ success: true, status: failed ? "failed" : "done" });
   } catch (err) {
     console.error("Agent result update failed:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Queue health at a glance — counts by status + oldest unfinished event.
+app.get("/api/internal/agent/events/stats", async (req, res) => {
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const rows = await AgentEvent.findAll({
+      attributes: [
+        "status",
+        [sequelize.fn("COUNT", sequelize.col("id")), "count"],
+        [sequelize.fn("MIN", sequelize.col("createdAt")), "oldest"],
+      ],
+      group: ["status"],
+    });
+
+    const byStatus = {};
+    for (const r of rows) {
+      byStatus[r.get("status")] = {
+        count: Number(r.get("count")),
+        oldest: r.get("oldest"),
+      };
+    }
+    const backlog = (byStatus.pending?.count || 0) + (byStatus.delivered?.count || 0);
+    res.json({ byStatus, backlog, needsAttention: (byStatus.failed?.count || 0) + (byStatus.dead?.count || 0) });
+  } catch (err) {
+    console.error("Agent event stats failed:", err.message);
     res.status(500).json({ message: err.message });
   }
 });

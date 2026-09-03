@@ -170,7 +170,14 @@ export const AgentEvent = sequelize.define(
     source:    { type: DataTypes.STRING,  allowNull: false }, // "github" | "backend"
     type:      { type: DataTypes.STRING,  allowNull: true  }, // workflow name or event type
     payload:   { type: DataTypes.JSONB,   allowNull: false },
-    status:    { type: DataTypes.STRING,  allowNull: false, defaultValue: "pending" }, // pending | delivered | done
+    // pending  → enqueued, not yet pulled
+    // delivered→ leased to the agent, in-flight
+    // done     → agent reported back, action succeeded
+    // failed   → agent reported back, but decision was null or outcome.success === false
+    // dead     → pulled AGENT_MAX_ATTEMPTS times without an ack (poison pill), given up
+    status:    { type: DataTypes.STRING,  allowNull: false, defaultValue: "pending" },
+    attempts:  { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 }, // hand-out count
+    lastError: { type: DataTypes.TEXT,    allowNull: true }, // short reason for failed/dead
     decision:  { type: DataTypes.JSONB,   allowNull: true }, // filled by the agent
     outcome:   { type: DataTypes.JSONB,   allowNull: true }, // filled by the agent
     createdAt:   { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
@@ -201,8 +208,8 @@ export const AgentHeartbeat = sequelize.define(
 /* ===== Bootstrap DDL ===== */
 
 // sequelize.sync() is skipped in production, so tables added after the initial
-// deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS) — safe
-// to run on every boot. Mirrors migrations/001 + migrations/002 + migrations/003;
+// deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS / ADD
+// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..004;
 // keep in sync with the NomineeAccessSend, AgentEvent and AgentHeartbeat models above.
 const BOOTSTRAP_SQL = `
   CREATE TABLE IF NOT EXISTS public."NomineeAccessSends" (
@@ -226,12 +233,17 @@ const BOOTSTRAP_SQL = `
     type          TEXT,
     payload       JSONB NOT NULL,
     status        TEXT NOT NULL DEFAULT 'pending',
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    "lastError"   TEXT,
     decision      JSONB,
     outcome       JSONB,
     "createdAt"   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     "deliveredAt" TIMESTAMP WITH TIME ZONE,
     "processedAt" TIMESTAMP WITH TIME ZONE
   );
+  -- Added after 002 shipped — CREATE TABLE IF NOT EXISTS won't backfill columns.
+  ALTER TABLE public."AgentEvents" ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE public."AgentEvents" ADD COLUMN IF NOT EXISTS "lastError" TEXT;
   CREATE INDEX IF NOT EXISTS idx_agent_events_status_created
     ON public."AgentEvents" (status, "createdAt");
 
