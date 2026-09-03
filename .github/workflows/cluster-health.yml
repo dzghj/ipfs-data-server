@@ -91,7 +91,15 @@ jobs:
             PEER_COUNT=0
             echo "::warning::peer list unavailable from BOTH VM1 and VM2 — Mac Mini status unknown"
           else
-            PEER_COUNT=$(jq 'length' /tmp/peers.json 2>/dev/null || echo 0)
+            # ipfs-cluster streams /peers as newline-delimited JSON objects, not
+            # a JSON array. Slurp (-s) into an array; also unwrap the case where
+            # a proxy hands back a real [ ... ] array.
+            jq -s 'if (length == 1 and (.[0] | type) == "array") then .[0] else . end' \
+              /tmp/peers.json > /tmp/peers-norm.json 2>/dev/null || echo '[]' > /tmp/peers-norm.json
+
+            PEER_COUNT=$(jq 'length' /tmp/peers-norm.json 2>/dev/null | head -n1 || echo 0)
+            PEER_COUNT=${PEER_COUNT//[!0-9]/}; [ -z "$PEER_COUNT" ] && PEER_COUNT=0
+
             # Match the Mac Mini by cluster peer ID, IPFS peer ID, or peername
             # (MACMINI_PEER_ID may be a full ID or just a prefix). UP unless the
             # matched peer reports a cluster- or ipfs-level error → DEGRADED.
@@ -105,7 +113,9 @@ jobs:
                 elif (($hit[0].error // "") != "")
                   or (($hit[0].ipfs.error // "") != "")          then "DEGRADED"
                 else "UP" end
-            ' /tmp/peers.json 2>/dev/null || echo UNKNOWN)
+            ' /tmp/peers-norm.json 2>/dev/null | head -n1 || echo UNKNOWN)
+            case "$MACMINI_STATUS" in UP|DOWN|DEGRADED) ;; *) MACMINI_STATUS=UNKNOWN ;; esac
+
             echo "  peer list source: ${PEER_SOURCE}   peers: ${PEER_COUNT}   mac mini: ${MACMINI_STATUS}"
           fi
 
