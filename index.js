@@ -26,6 +26,16 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
+// This is a pure JSON API with per-user authenticated data — nothing here
+// should ever be cached or 304'd by a browser/proxy (Express's default ETag
+// behavior treats identical-content responses as cacheable, which is wrong
+// for private, per-request data and just adds a confusing failure mode).
+app.use((req, res, next) => {
+  res.set("Cache-Control", "no-store");
+  next();
+});
+app.disable("etag");
+
 /* ===== Multer Memory ===== */
 const upload = multer({
   storage: multer.memoryStorage(),
