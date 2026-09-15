@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import { Resend } from "resend";
 import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat } from "./db.js";
 import { Op } from "sequelize";
-import { secureUpload, secureView } from "./secure-share/index.js";
+import { secureUpload, secureUploadClientEncrypted, secureView } from "./secure-share/index.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
 import { decrypt } from "./secure-share/crypto-utils.js";
 import { buildHealthPayload, isAuthorizedInternalRequest } from "./monitoring.js";
@@ -375,20 +375,38 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       "text/plain"
     ];
 
-    if (!allowedMimeTypes.includes(req.file.mimetype)) {
+    // Client-side encrypted uploads arrive as application/octet-stream ciphertext
+    // (see the frontend's src/utils/crypto.js), so validate the caller-declared
+    // original type/name instead of multer's detected ones.
+    const clientEncrypted = req.body.clientEncrypted === "1" || req.body.clientEncrypted === "true";
+    const declaredMime = clientEncrypted ? req.body.mimeType : req.file.mimetype;
+    const declaredName = clientEncrypted ? (req.body.originalName || req.file.originalname) : req.file.originalname;
+
+    if (!allowedMimeTypes.includes(declaredMime)) {
       return res.status(400).json({ message: "Unsupported file type" });
     }
 
     // Optional: sanitize filename
-    const safeFilename = req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    const safeFilename = String(declaredName || "file").replace(/[^a-zA-Z0-9.\-_]/g, "_");
 
-    const result = await secureUpload({
-      buffer: req.file.buffer,
-      filename: safeFilename,
-      ownerId: req.user.id,
-      mimeType: req.file.mimetype,
-      category: req.body.category || "Personal",
-    });
+    const result = clientEncrypted
+      ? await secureUploadClientEncrypted({
+          encryptedBuffer: req.file.buffer,
+          encKey: req.body.encKey,
+          encIv: req.body.encIv,
+          encAuthTag: req.body.encAuthTag,
+          plaintextSha256: req.body.plaintextSha256,
+          filename: safeFilename,
+          ownerId: req.user.id,
+          mimeType: declaredMime,
+        })
+      : await secureUpload({
+          buffer: req.file.buffer,
+          filename: safeFilename,
+          ownerId: req.user.id,
+          mimeType: req.file.mimetype,
+          category: req.body.category || "Personal",
+        });
 
     const record = await FileRecord.create({
       userId: req.user.id,
@@ -398,7 +416,7 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       encryptionKey: result.encryptedFileKey,
       iv: result.iv, // hex string    
       authTag: result.authTag, // hex string   
-      mimeType: req.file.mimetype,
+      mimeType: declaredMime,
       category: req.body.category || "Personal",
       uploadedAt: new Date(),
     });

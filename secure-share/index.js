@@ -38,24 +38,26 @@ async function clusterPin(cid) {
   }
 }
 
-/* ===== Secure Upload ===== */
+/* ===== Shared: pin an already-encrypted buffer to IPFS ===== */
+async function storeEncrypted({ encrypted, filename, ownerId }) {
+  const upload = await ipfs.add(encrypted);
+  const cid = upload.cid.toString();
+
+  await ipfs.pin.add(upload.cid);           // pin locally
+  await clusterPin(cid);                     // replicate across the cluster
+
+  await AccessLog.create({ actorEmail: ownerId.toString(), role: "user", action: "UPLOAD", note: filename });
+
+  return { cid };
+}
+
+/* ===== Secure Upload (server-side encryption) ===== */
 export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
   const fileKey = generateKey();
   const { encrypted, iv, authTag } = encrypt(buffer, fileKey);
   const hash = sha256(buffer);
 
-  // Upload to IPFS
-  const upload = await ipfs.add(encrypted);
- 
-  const cid = upload.cid.toString();
-  // pin locally
-  await ipfs.pin.add(upload.cid);
-
-  // pin across cluster (replicates to all cluster nodes)
-  await clusterPin(cid);
-
-  // Save audit log
-  await AccessLog.create({ actorEmail: ownerId.toString(), role: "user", action: "UPLOAD", note: filename });
+  const { cid } = await storeEncrypted({ encrypted, filename, ownerId });
 
   return {
     cid,
@@ -66,6 +68,49 @@ export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
     filename,
     ownerId,
    mimeType,
+  };
+}
+
+/* ===== Secure Upload (client-side encryption) ===== */
+// The browser already encrypted the file with AES-256-GCM (see the frontend's
+// src/utils/crypto.js) and sends the ciphertext plus the key material. This
+// server never sees plaintext for these uploads. The key/iv/authTag still land
+// in FileRecord and are still readable by this server (needed for nominee
+// access and secureView's server-side decrypt) — so this is "encrypted before
+// it leaves the device", not zero-knowledge.
+//
+// Formats must match crypto-utils.js's decrypt(): key base64 (32 bytes),
+// iv hex (12 bytes), authTag hex (16 bytes) — exactly what the browser's
+// WebCrypto AES-GCM output produces once the trailing 16-byte tag is split off.
+export async function secureUploadClientEncrypted({
+  encryptedBuffer,
+  encKey,
+  encIv,
+  encAuthTag,
+  plaintextSha256,
+  filename,
+  ownerId,
+  mimeType,
+}) {
+  if (!encKey || !encIv || !encAuthTag || !plaintextSha256) {
+    throw new Error("Missing client encryption fields");
+  }
+  if (Buffer.from(encKey, "base64").length !== 32) throw new Error("encKey must be a 32-byte AES-256 key (base64)");
+  if (Buffer.from(encIv, "hex").length !== 12) throw new Error("encIv must be 12 bytes (hex)");
+  if (Buffer.from(encAuthTag, "hex").length !== 16) throw new Error("encAuthTag must be 16 bytes (hex)");
+  if (!/^[a-f0-9]{64}$/i.test(plaintextSha256)) throw new Error("plaintextSha256 must be a 64-char hex string");
+
+  const { cid } = await storeEncrypted({ encrypted: encryptedBuffer, filename, ownerId });
+
+  return {
+    cid,
+    sha256Hash: plaintextSha256.toLowerCase(),
+    encryptedFileKey: encKey,
+    iv: encIv,
+    authTag: encAuthTag,
+    filename,
+    ownerId,
+    mimeType,
   };
 }
 /* ===== Secure View ===== */
