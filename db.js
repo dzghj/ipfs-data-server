@@ -77,6 +77,11 @@ export const FileRecord = sequelize.define(
     cid:      { type: DataTypes.STRING,  allowNull: false },
     sha256Hash: { type: DataTypes.STRING, allowNull: true },
 
+    // OpenTimestamps anchor for sha256Hash (see secure-share/anchor.js)
+    otsProof:      { type: DataTypes.TEXT, allowNull: true }, // base64 .ots
+    otsAnchoredAt: { type: DataTypes.DATE, allowNull: true }, // when we stamped it
+    otsUpgradedAt: { type: DataTypes.DATE, allowNull: true }, // when the Bitcoin attestation was attached
+
     // Encryption
     encryptionKey: { type: DataTypes.TEXT,   allowNull: true },
     iv:            { type: DataTypes.TEXT,   allowNull: true },
@@ -229,8 +234,8 @@ export const SupportMessage = sequelize.define(
 
 // sequelize.sync() is skipped in production, so tables added after the initial
 // deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS / ADD
-// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..007;
-// keep in sync with the NomineeAccessSend, AgentEvent, AgentHeartbeat and
+// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..008;
+// keep in sync with the FileRecord, NomineeAccessSend, AgentEvent, AgentHeartbeat and
 // SupportMessage models above.
 const BOOTSTRAP_SQL = `
   CREATE TABLE IF NOT EXISTS public."NomineeAccessSends" (
@@ -288,6 +293,11 @@ const BOOTSTRAP_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_support_messages_user_id
     ON public."SupportMessages" ("userId", "createdAt");
+
+  -- FileRecords is created by sequelize.sync() in dev; prod needs this explicitly.
+  ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "otsProof" TEXT;
+  ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "otsAnchoredAt" TIMESTAMP WITH TIME ZONE;
+  ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "otsUpgradedAt" TIMESTAMP WITH TIME ZONE;
 `;
 
 /* ===== Init ===== */

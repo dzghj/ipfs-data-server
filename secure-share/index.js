@@ -1,5 +1,6 @@
 import { ipfs } from "./ipfs-client.js";
 import { generateKey, encrypt, decrypt, sha256 } from "./crypto-utils.js";
+import { anchorHash } from "./anchor.js";
 import { FileRecord, AccessLog, Nominee } from "../db.js";
 import crypto from "crypto";
 
@@ -38,17 +39,27 @@ async function clusterPin(cid) {
   }
 }
 
-/* ===== Shared: pin an already-encrypted buffer to IPFS ===== */
-async function storeEncrypted({ encrypted, filename, ownerId }) {
+/* ===== Shared: pin an already-encrypted buffer to IPFS + anchor its hash ===== */
+// `plaintextSha256` is the hash of the ORIGINAL bytes — used for the
+// OpenTimestamps anchor and stored as sha256Hash for secureView's integrity
+// check. Anchoring is best-effort (see anchor.js); a slow/broken calendar
+// server never blocks or fails the upload.
+async function storeEncrypted({ encrypted, plaintextSha256, filename, ownerId }) {
   const upload = await ipfs.add(encrypted);
   const cid = upload.cid.toString();
 
   await ipfs.pin.add(upload.cid);           // pin locally
   await clusterPin(cid);                     // replicate across the cluster
 
+  const anchor = await anchorHash(plaintextSha256);
+
   await AccessLog.create({ actorEmail: ownerId.toString(), role: "user", action: "UPLOAD", note: filename });
 
-  return { cid };
+  return {
+    cid,
+    otsProof: anchor?.otsProof ?? null,
+    otsAnchoredAt: anchor?.anchoredAt ?? null,
+  };
 }
 
 /* ===== Secure Upload (server-side encryption) ===== */
@@ -57,10 +68,10 @@ export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
   const { encrypted, iv, authTag } = encrypt(buffer, fileKey);
   const hash = sha256(buffer);
 
-  const { cid } = await storeEncrypted({ encrypted, filename, ownerId });
+  const stored = await storeEncrypted({ encrypted, plaintextSha256: hash, filename, ownerId });
 
   return {
-    cid,
+    ...stored,
     sha256Hash: hash,
     encryptedFileKey: fileKey.toString("base64"),
     iv: iv.toString("hex"),
@@ -100,10 +111,15 @@ export async function secureUploadClientEncrypted({
   if (Buffer.from(encAuthTag, "hex").length !== 16) throw new Error("encAuthTag must be 16 bytes (hex)");
   if (!/^[a-f0-9]{64}$/i.test(plaintextSha256)) throw new Error("plaintextSha256 must be a 64-char hex string");
 
-  const { cid } = await storeEncrypted({ encrypted: encryptedBuffer, filename, ownerId });
+  const stored = await storeEncrypted({
+    encrypted: encryptedBuffer,
+    plaintextSha256: plaintextSha256.toLowerCase(),
+    filename,
+    ownerId,
+  });
 
   return {
-    cid,
+    ...stored,
     sha256Hash: plaintextSha256.toLowerCase(),
     encryptedFileKey: encKey,
     iv: encIv,

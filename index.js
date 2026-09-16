@@ -10,6 +10,7 @@ import { Resend } from "resend";
 import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat, SupportMessage } from "./db.js";
 import { Op } from "sequelize";
 import { secureUpload, secureUploadClientEncrypted, secureView } from "./secure-share/index.js";
+import { upgradeProof, verifyProof } from "./secure-share/anchor.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
 import { decrypt } from "./secure-share/crypto-utils.js";
 import { buildHealthPayload, isAuthorizedInternalRequest } from "./monitoring.js";
@@ -504,6 +505,8 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       filename: safeFilename,
       cid: result.cid,
       sha256Hash: result.sha256Hash,
+      otsProof: result.otsProof,
+      otsAnchoredAt: result.otsAnchoredAt,
       encryptionKey: result.encryptedFileKey,
       iv: result.iv, // hex string    
       authTag: result.authTag, // hex string   
@@ -519,7 +522,9 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       file: {
         id: record.id,
         filename: record.filename,
-        cid: record.cid
+        cid: record.cid,
+        sha256Hash: record.sha256Hash,
+        otsAnchoredAt: record.otsAnchoredAt
       }
     });
 
@@ -558,6 +563,98 @@ app.get("/api/file/:id/view", auth, async (req, res) => {
     res.status(500).json({
       message: err.message || "Secure view failed",
     });
+  }
+});
+
+/* ===== OpenTimestamps proof ===== */
+// The .ots proof anchors this file's SHA-256 into Bitcoin via OpenTimestamps.
+// Anyone can verify it against Bitcoin without trusting this server — that is
+// what makes the file's timestamp independently verifiable. See
+// secure-share/anchor.js. Proofs start as a calendar commitment and gain a
+// Bitcoin attestation after a few hours; these routes upgrade lazily on access.
+
+async function assertFileAccess(fileId, user) {
+  const file = await FileRecord.findByPk(fileId);
+  if (!file) { const e = new Error("File not found"); e.status = 404; throw e; }
+  if (user.id === file.userId) return file;
+  const nominee = await Nominee.findOne({
+    where: { userId: file.userId, nomineeAccountId: user.id },
+  });
+  if (!nominee) { const e = new Error("Not authorized"); e.status = 403; throw e; }
+  if (
+    nominee.accessLevel === "partial" &&
+    !(nominee.allowedFolders || []).includes(file.category)
+  ) { const e = new Error("Not authorized"); e.status = 403; throw e; }
+  return file;
+}
+
+async function maybeUpgradeProof(file) {
+  if (!file.otsProof || file.otsUpgradedAt) return file;
+  const next = await upgradeProof(file.otsProof);
+  if (next && next !== file.otsProof) {
+    await file.update({ otsProof: next, otsUpgradedAt: new Date() });
+  }
+  return file;
+}
+
+// Download the raw .ots proof file (verify it with `ots verify`, or the endpoint below).
+app.get("/api/file/:id/proof", auth, async (req, res) => {
+  try {
+    let file = await assertFileAccess(req.params.id, req.user);
+    if (!file.otsProof) return res.status(404).json({ message: "No timestamp proof for this file" });
+    file = await maybeUpgradeProof(file);
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${(file.filename || "file").replace(/"/g, "")}.ots"`
+    );
+    res.send(Buffer.from(file.otsProof, "base64"));
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
+// Verify the proof against Bitcoin and return the confirmed timestamp (if any).
+app.get("/api/file/:id/proof/verify", auth, async (req, res) => {
+  try {
+    let file = await assertFileAccess(req.params.id, req.user);
+    if (!file.otsProof) return res.status(404).json({ message: "No timestamp proof for this file" });
+    file = await maybeUpgradeProof(file);
+    const result = await verifyProof(file.otsProof, file.sha256Hash);
+    res.json({
+      fileId: file.id,
+      cid: file.cid,
+      sha256Hash: file.sha256Hash,
+      otsAnchoredAt: file.otsAnchoredAt,
+      otsUpgradedAt: file.otsUpgradedAt,
+      ...result,
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
+// Batch-upgrade calendar-only proofs to Bitcoin attestations. Point a cron here.
+app.post("/api/internal/ots/upgrade-pending", async (req, res) => {
+  if (!isAuthorizedInternalRequest(req, process.env.INTERNAL_API_SECRET)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  try {
+    const pending = await FileRecord.findAll({
+      where: { otsProof: { [Op.ne]: null }, otsUpgradedAt: null },
+      limit: Math.min(Number(req.query.limit) || 100, 500),
+    });
+    let upgraded = 0;
+    for (const f of pending) {
+      const next = await upgradeProof(f.otsProof);
+      if (next && next !== f.otsProof) {
+        await f.update({ otsProof: next, otsUpgradedAt: new Date() });
+        upgraded++;
+      }
+    }
+    res.json({ success: true, checked: pending.length, upgraded });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -660,7 +757,7 @@ app.get("/api/myfiles", auth, async (req, res) => {
     const files = await FileRecord.findAll({
       where: { userId: req.user.id },
       order: [["uploadedAt", "DESC"]],
-      attributes: ["id", "filename", "cid", "uploadedAt", "protectionOn", "keyHolderList", "category", "mimeType"]
+      attributes: ["id", "filename", "cid", "sha256Hash", "otsAnchoredAt", "otsUpgradedAt", "uploadedAt", "protectionOn", "keyHolderList", "category", "mimeType"]
     });
 
     res.json({ success: true, files });
