@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 import authRoutes, { auth } from "./auth.js";
 import jwt from "jsonwebtoken";
 import { Resend } from "resend";
-import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat } from "./db.js";
+import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat, SupportMessage } from "./db.js";
 import { Op } from "sequelize";
 import { secureUpload, secureUploadClientEncrypted, secureView } from "./secure-share/index.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
@@ -124,17 +124,24 @@ app.get("/api/internal/agent/events", async (req, res) => {
       }
     );
 
+    const where = {
+      [Op.or]: [
+        { status: "pending" },
+        {
+          status: "delivered",
+          deliveredAt: { [Op.lt]: staleCutoff },
+          attempts: { [Op.lt]: AGENT_MAX_ATTEMPTS },
+        },
+      ],
+    };
+    // Optional ?type= / ?excludeType= — lets the agent run a separate, faster
+    // poll loop just for support_message events without the infra loop racing
+    // it for the same rows (excludeType keeps infra events out of that race).
+    if (req.query.type) where.type = req.query.type;
+    if (req.query.excludeType) where.type = { [Op.or]: [{ [Op.ne]: req.query.excludeType }, { [Op.is]: null }] };
+
     const rows = await AgentEvent.findAll({
-      where: {
-        [Op.or]: [
-          { status: "pending" },
-          {
-            status: "delivered",
-            deliveredAt: { [Op.lt]: staleCutoff },
-            attempts: { [Op.lt]: AGENT_MAX_ATTEMPTS },
-          },
-        ],
-      },
+      where,
       order: [["createdAt", "ASC"]],
       limit,
     });
@@ -188,6 +195,22 @@ app.post("/api/internal/agent/events/:id/result", async (req, res) => {
         : null,
       processedAt: new Date(),
     });
+
+    // Support-chat events resolve into their SupportMessages row instead of
+    // just sitting in the queue — that's what the frontend chat widget polls.
+    if (row.type === "support_message" && row.payload?.supportMessageId) {
+      const reply = outcome?.reply ?? decision?.reply ?? null;
+      await SupportMessage.update(
+        {
+          status: failed || !reply ? "failed" : "answered",
+          reply: reply || "Sorry, something went wrong answering your question. Please try again.",
+          agentEventId: row.id,
+          answeredAt: new Date(),
+        },
+        { where: { id: row.payload.supportMessageId } }
+      ).catch((err) => console.warn("[SUPPORT] failed to update SupportMessage:", err.message));
+    }
+
     res.json({ success: true, status: failed ? "failed" : "done" });
   } catch (err) {
     console.error("Agent result update failed:", err.message);
@@ -223,6 +246,64 @@ app.get("/api/internal/agent/events/stats", async (req, res) => {
     res.json({ byStatus, backlog, needsAttention: (byStatus.failed?.count || 0) + (byStatus.dead?.count || 0) });
   } catch (err) {
     console.error("Agent event stats failed:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ===== 24/7 Support chat ===== */
+// User submits a question from the frontend chat popup. It's stored here and
+// enqueued to the agent as an AgentEvent (type "support_message"); the agent
+// runs it through Ollama with a support-assistant prompt and reports back via
+// the normal POST .../events/:id/result path, which resolves this row (see
+// above). The frontend polls GET /api/support/message/:id for the reply.
+const SUPPORT_MESSAGE_MAX_LEN = 2000;
+
+app.post("/api/support/message", auth, async (req, res) => {
+  try {
+    const message = String(req.body?.message || "").trim();
+    if (!message) return res.status(400).json({ message: "Message is required" });
+    if (message.length > SUPPORT_MESSAGE_MAX_LEN) {
+      return res.status(400).json({ message: `Message too long (max ${SUPPORT_MESSAGE_MAX_LEN} chars)` });
+    }
+
+    const support = await SupportMessage.create({
+      userId: req.user.id,
+      message,
+      status: "pending",
+    });
+
+    const event = await AgentEvent.create({
+      source: "backend",
+      type: "support_message",
+      payload: { type: "support_message", supportMessageId: support.id, userId: req.user.id, message },
+      status: "pending",
+    });
+
+    await support.update({ agentEventId: event.id });
+
+    res.json({ success: true, id: support.id, status: support.status });
+  } catch (err) {
+    console.error("Support message submit failed:", err.message);
+    res.status(500).json({ message: "Failed to submit message" });
+  }
+});
+
+// Frontend polls this every few seconds until status is answered/failed.
+app.get("/api/support/message/:id", auth, async (req, res) => {
+  try {
+    const support = await SupportMessage.findByPk(req.params.id);
+    if (!support || support.userId !== req.user.id) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    res.json({
+      id: support.id,
+      status: support.status,
+      reply: support.reply,
+      createdAt: support.createdAt,
+      answeredAt: support.answeredAt,
+    });
+  } catch (err) {
+    console.error("Support message fetch failed:", err.message);
     res.status(500).json({ message: err.message });
   }
 });

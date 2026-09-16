@@ -205,12 +205,33 @@ export const AgentHeartbeat = sequelize.define(
   { tableName: "AgentHeartbeats", schema: "public", timestamps: false }
 );
 
+/* ===== SupportMessages — 24/7 Support chat widget ===== */
+// User submits a message from the frontend chat popup; it's enqueued to the
+// agent (as an AgentEvent, type "support_message") for Ollama to answer, same
+// pull/report path as everything else. The frontend polls this row for the
+// reply instead of the raw AgentEvents queue.
+export const SupportMessage = sequelize.define(
+  "SupportMessage",
+  {
+    id:         { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+    userId:     { type: DataTypes.INTEGER, allowNull: false },
+    message:    { type: DataTypes.TEXT,    allowNull: false },
+    status:     { type: DataTypes.STRING,  allowNull: false, defaultValue: "pending" }, // pending | answered | failed
+    reply:      { type: DataTypes.TEXT,    allowNull: true },
+    agentEventId: { type: DataTypes.INTEGER, allowNull: true },
+    createdAt:  { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
+    answeredAt: { type: DataTypes.DATE, allowNull: true },
+  },
+  { tableName: "SupportMessages", schema: "public", timestamps: false }
+);
+
 /* ===== Bootstrap DDL ===== */
 
 // sequelize.sync() is skipped in production, so tables added after the initial
 // deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS / ADD
-// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..004;
-// keep in sync with the NomineeAccessSend, AgentEvent and AgentHeartbeat models above.
+// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..007;
+// keep in sync with the NomineeAccessSend, AgentEvent, AgentHeartbeat and
+// SupportMessage models above.
 const BOOTSTRAP_SQL = `
   CREATE TABLE IF NOT EXISTS public."NomineeAccessSends" (
     id           SERIAL PRIMARY KEY,
@@ -254,6 +275,19 @@ const BOOTSTRAP_SQL = `
     detail         JSONB,
     "lastSeenAt"   TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
   );
+
+  CREATE TABLE IF NOT EXISTS public."SupportMessages" (
+    id             SERIAL PRIMARY KEY,
+    "userId"       INTEGER NOT NULL,
+    message        TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'pending',
+    reply          TEXT,
+    "agentEventId" INTEGER,
+    "createdAt"    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    "answeredAt"   TIMESTAMP WITH TIME ZONE
+  );
+  CREATE INDEX IF NOT EXISTS idx_support_messages_user_id
+    ON public."SupportMessages" ("userId", "createdAt");
 `;
 
 /* ===== Init ===== */
