@@ -1,15 +1,34 @@
 services:
   - type: web
     name: ipfs-data-server
-    env: node
+    env: docker
+    dockerfilePath: ./Dockerfile
     plan: starter
-    buildCommand: npm install
-    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: INTERNAL_API_SECRET
         generateValue: true
+      # Join the tailnet so this service can reach the Mac Mini's IPFS API
+      # directly (see Dockerfile / docker-entrypoint.sh / tailscale-forward.mjs)
+      # instead of through a public tunnel. Generate at
+      # https://login.tailscale.com/admin/settings/keys — reusable + ephemeral
+      # recommended, so container restarts can re-auth and don't linger as
+      # offline devices in the tailnet when they stop.
+      - key: TS_AUTHKEY
+        sync: false
+      - key: IPFS_TAILNET_HOST
+        value: 100.73.92.84
+      - key: IPFS_TAILNET_PORT
+        value: "5001"
+      # secure-share/ipfs-client.js now talks to the local forwarder, which
+      # relays to IPFS_TAILNET_HOST/PORT above over the tailnet.
+      - key: IPFS_HOST
+        value: 127.0.0.1
+      - key: IPFS_PORT
+        value: "5001"
+      - key: IPFS_PROTOCOL
+        value: http
 
   - type: cron
     name: resend-cron

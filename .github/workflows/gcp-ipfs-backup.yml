@@ -1,9 +1,19 @@
 name: GCP IPFS Backup
 
+# DISABLED (Oct 2026): VM1 (instance-ipfs-main-server) is retired — the Mac
+# Mini is now the only IPFS node, and this workflow has no equivalent target
+# for it. More importantly: this workflow stopping VM1, snapshotting it, and
+# restarting it every 2 weeks is the most likely actual cause of VM1's last
+# outage — if the final `gcloud compute instances start` hit a zone capacity
+# shortage (as we saw happen manually), VM1 was left stopped with no further
+# retry. Do not re-enable the schedule against a VM you intend to keep off.
+#
+# Rework this entirely once a replacement cluster node exists — it'll need a
+# different VM_NAME/ZONE/DISK_NAME, and ideally shouldn't stop the node it's
+# backing up at all (a live disk snapshot doesn't require stopping the VM).
+# workflow_dispatch is left in so it can still be tested manually if needed.
+
 on:
-  schedule:
-    # Every 2 weeks on Sunday at 3 PM UTC
-    - cron: "0 15 * * 0/2"
   workflow_dispatch:
 
 jobs:
