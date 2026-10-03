@@ -29,6 +29,19 @@ services:
         value: "5001"
       - key: IPFS_PROTOCOL
         value: http
+      # secure-share/index.js's clusterPin() talks to the local forwarder too,
+      # which relays to the Mac Mini's Cluster REST API (:9094) over the
+      # tailnet. CLUSTER_API_PASSWORD is set manually in the Render dashboard,
+      # never committed here — see CLUSTER_API_USER's matching entry in the
+      # Mac Mini's ~/.ipfs-cluster/service.json (api.restapi.basic_auth_credentials).
+      - key: CLUSTER_API_URL
+        value: http://127.0.0.1:9094
+      - key: CLUSTER_API_USER
+        value: render-backend
+      - key: CLUSTER_API_PASSWORD
+        sync: false
+      - key: CLUSTER_TAILNET_PORT
+        value: "9094"
 
   - type: cron
     name: resend-cron

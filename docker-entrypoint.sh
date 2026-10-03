@@ -1,9 +1,11 @@
 #!/bin/sh
-# Brings this container onto the tailnet, then forwards 127.0.0.1:5001 to the
-# Mac Mini's real IPFS port over that private connection — so secure-share/
-# ipfs-client.js needs no code change at all, just IPFS_HOST=127.0.0.1,
-# IPFS_PORT=5001, IPFS_PROTOCOL=http. No public tunnel, no X-Secret-Key
-# exposed to the internet; only tailnet members can ever reach this port.
+# Brings this container onto the tailnet, then forwards 127.0.0.1:5001 and
+# 127.0.0.1:9094 to the Mac Mini's real IPFS and Cluster REST API ports over
+# that private connection — so secure-share/ipfs-client.js and index.js's
+# clusterPin() need no code change at all, just IPFS_HOST=127.0.0.1,
+# IPFS_PORT=5001, IPFS_PROTOCOL=http, CLUSTER_API_URL=http://127.0.0.1:9094.
+# No public tunnel, no secrets exposed to the internet; only tailnet members
+# can ever reach these ports.
 set -e
 
 STATE_DIR=/tmp/tailscale
@@ -37,7 +39,7 @@ else
   done
   echo "Tailscale up: $(tailscale status 2>/dev/null | head -1)"
 
-  echo "Starting local forward 127.0.0.1:5001 -> ${IPFS_TAILNET_HOST:-100.73.92.84}:${IPFS_TAILNET_PORT:-5001} ..."
+  echo "Starting local forwards to ${IPFS_TAILNET_HOST:-100.73.92.84} (IPFS :${IPFS_TAILNET_PORT:-5001}, Cluster :${CLUSTER_TAILNET_PORT:-9094}) ..."
   node tailscale-forward.mjs &
 fi
 
