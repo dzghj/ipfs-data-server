@@ -6,12 +6,16 @@ name: IPFS Cluster Health Check
 # every upload/view) and this account's MacBook Air (follower, pure
 # redundancy — losing it doesn't take the app down, just the backup copy).
 #
-# IPFS itself is checked via ipfs-AI-control's existing ngrok tunnel (same
-# path ipfs-mirror.yml uses). Cluster membership is checked via the Mac
-# Mini's Cluster REST API, reachable through Tailscale Funnel
-# (https://davids-mac-mini.taile2344b.ts.net/cluster) fronting a small local
-# proxy (legacychain-ipfs-proxy.js, lives on the Mac Mini, not in this repo)
-# that routes /cluster/* to the real Cluster REST API (:9094).
+# IPFS itself is checked via the SAME path secure-share/ipfs-client.js
+# actually uses in production: Tailscale Funnel
+# (https://davids-mac-mini.taile2344b.ts.net) fronting a small local proxy
+# (legacychain-ipfs-proxy.js, lives on the Mac Mini, not in this repo) that
+# routes /ipfs/* to Kubo's API (:5001) and /cluster/* to the Cluster REST
+# API (:9094). NOT ipfs-AI-control's older ngrok tunnel
+# (conclude-pavilion-condense.ngrok-free.dev) — the app stopped depending on
+# that when the Funnel path was wired in, and checking it instead of the
+# real path means this workflow can alert on an outage that doesn't actually
+# affect the app (or miss one that does).
 #
 # IPFS down is a hard failure (SMS) — there's no fallback, uploads/views are
 # actually broken. The follower alone being down is a soft warning only — no
@@ -38,14 +42,14 @@ jobs:
     name: Check the IPFS cluster (Mac Mini + follower)
     runs-on: ubuntu-latest
     env:
-      IPFS_NODE_URL: ${{ vars.IPFS_NODE_URL || 'https://conclude-pavilion-condense.ngrok-free.dev' }}
+      IPFS_NODE_URL: ${{ vars.IPFS_NODE_URL || 'https://davids-mac-mini.taile2344b.ts.net/ipfs' }}
       CLUSTER_API_URL: ${{ vars.CLUSTER_API_URL || 'https://davids-mac-mini.taile2344b.ts.net/cluster' }}
       IPFS_SECRET: ${{ secrets.IPFS_SECRET }}
       CLUSTER_API_USER: ${{ secrets.CLUSTER_API_USER }}
       CLUSTER_API_PASSWORD: ${{ secrets.CLUSTER_API_PASSWORD }}
 
     steps:
-      - name: Check IPFS RPC API (Mac Mini, via ipfs-AI-control's tunnel)
+      - name: Check IPFS RPC API (Mac Mini, via Tailscale Funnel — the real production path)
         run: |
           echo "Checking ${IPFS_NODE_URL}/api/v0/id ..."
           CODE=$(curl -s --max-time 20 -o /tmp/id.json -w "%{http_code}" \
