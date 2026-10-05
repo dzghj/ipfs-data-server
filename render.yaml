@@ -1,47 +1,44 @@
 services:
+  # NOTE: this service is actually deployed as a manually-configured Node Web
+  # Service (Free plan), not synced from this Blueprint — Render has no
+  # in-place way to switch an existing service's env (node/docker) after
+  # creation, so Dockerfile/docker-entrypoint.sh/tailscale-forward.mjs below
+  # are currently unused leftovers from an abandoned Tailscale-in-container
+  # approach. Reaching the Mac Mini instead goes through Tailscale Funnel: a
+  # public HTTPS URL (davids-mac-mini.taile2344b.ts.net) proxied by
+  # legacychain-ipfs-proxy.js (runs directly on the Mac Mini, not in this
+  # repo) which routes /ipfs/* -> Kubo's API (:5001) and /cluster/* -> the
+  # Cluster REST API (:9094), since Funnel only exposes one port.
   - type: web
     name: ipfs-data-server
-    env: docker
-    dockerfilePath: ./Dockerfile
+    env: node
     plan: starter
     envVars:
       - key: NODE_ENV
         value: production
       - key: INTERNAL_API_SECRET
         generateValue: true
-      # Join the tailnet so this service can reach the Mac Mini's IPFS API
-      # directly (see Dockerfile / docker-entrypoint.sh / tailscale-forward.mjs)
-      # instead of through a public tunnel. Generate at
-      # https://login.tailscale.com/admin/settings/keys — reusable + ephemeral
-      # recommended, so container restarts can re-auth and don't linger as
-      # offline devices in the tailnet when they stop.
-      - key: TS_AUTHKEY
-        sync: false
-      - key: IPFS_TAILNET_HOST
-        value: 100.73.92.84
-      - key: IPFS_TAILNET_PORT
-        value: "5001"
-      # secure-share/ipfs-client.js now talks to the local forwarder, which
-      # relays to IPFS_TAILNET_HOST/PORT above over the tailnet.
       - key: IPFS_HOST
-        value: 127.0.0.1
-      - key: IPFS_PORT
-        value: "5001"
+        value: davids-mac-mini.taile2344b.ts.net
       - key: IPFS_PROTOCOL
-        value: http
-      # secure-share/index.js's clusterPin() talks to the local forwarder too,
-      # which relays to the Mac Mini's Cluster REST API (:9094) over the
-      # tailnet. CLUSTER_API_PASSWORD is set manually in the Render dashboard,
-      # never committed here — see CLUSTER_API_USER's matching entry in the
-      # Mac Mini's ~/.ipfs-cluster/service.json (api.restapi.basic_auth_credentials).
+        value: https
+      # ipfs-http-client defaults to "api/v0" off the bare host, which misses
+      # the proxy's "/ipfs" prefix — see secure-share/ipfs-client.js.
+      - key: IPFS_API_PATH
+        value: /ipfs/api/v0
+      # secure-share/index.js's clusterPin() builds this URL by simple string
+      # concatenation (CLUSTER_API_URL + "/pins/<cid>"), so the "/cluster"
+      # prefix just needs to be part of the base URL, no code-side path
+      # option needed like IPFS_API_PATH above.
+      # CLUSTER_API_PASSWORD is set manually in the Render dashboard, never
+      # committed here — see CLUSTER_API_USER's matching entry in the Mac
+      # Mini's ~/.ipfs-cluster/service.json (api.restapi.basic_auth_credentials).
       - key: CLUSTER_API_URL
-        value: http://127.0.0.1:9094
+        value: https://davids-mac-mini.taile2344b.ts.net/cluster
       - key: CLUSTER_API_USER
         value: render-backend
       - key: CLUSTER_API_PASSWORD
         sync: false
-      - key: CLUSTER_TAILNET_PORT
-        value: "9094"
 
   - type: cron
     name: resend-cron
