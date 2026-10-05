@@ -1,24 +1,29 @@
-name: IPFS Node Health Check
+name: IPFS Cluster Health Check
 
 # ─────────────────────────────────────────────────────────────────────────────
-# VM1 and VM2 are retired (Oct 2026) — the Mac Mini is now the ONLY IPFS node.
-# There is no cluster any more, so this no longer checks cluster peer
-# membership; it checks the one thing that now matters: can the backend reach
-# the Mac Mini's IPFS RPC API at all?
+# VM1/VM2 are retired. The cluster is now 2 nodes: the Mac Mini (bootstrap,
+# critical — this is what secure-share/ipfs-client.js actually talks to for
+# every upload/view) and this account's MacBook Air (follower, pure
+# redundancy — losing it doesn't take the app down, just the backup copy).
 #
-# The Mac Mini has no public inbound of its own. Reachability goes through the
-# ipfs-AI-control agent's ngrok tunnel (already public for the agent's own
-# port), which proxies /api/v0/* straight to Kubo's local API — the exact same
-# path secure-share/ipfs-client.js uses in production (see commit that added
-# the proxy route to ipfs-AI-control's src/server.js). If this check fails,
-# uploads and views are actually down — there's no second node to fall back to
-# any more, so this is now a hard failure worth the SMS alert.
+# IPFS itself is checked via ipfs-AI-control's existing ngrok tunnel (same
+# path ipfs-mirror.yml uses). Cluster membership is checked via the Mac
+# Mini's Cluster REST API, reachable through Tailscale Funnel
+# (https://davids-mac-mini.taile2344b.ts.net/cluster) fronting a small local
+# proxy (legacychain-ipfs-proxy.js, lives on the Mac Mini, not in this repo)
+# that routes /cluster/* to the real Cluster REST API (:9094).
+#
+# IPFS down is a hard failure (SMS) — there's no fallback, uploads/views are
+# actually broken. The follower alone being down is a soft warning only — no
+# SMS, since the Mac Mini still serves everything by itself; it just means no
+# redundancy until the MacBook Air reconnects.
 #
 # Config — Settings → Secrets and variables → Actions:
-#   secrets: IPFS_SECRET (same value as the backend's IPFS_SECRET),
+#   secrets: IPFS_SECRET, CLUSTER_API_USER, CLUSTER_API_PASSWORD,
 #            BACKEND_URL, INTERNAL_API_SECRET, TWILIO_*, ALERT_PHONE_NUMBER
-#   vars   : IPFS_NODE_URL (the agent's ngrok URL; optional, falls back to the
-#            current tunnel domain below)
+#   vars   : IPFS_NODE_URL, CLUSTER_API_URL (both optional, fall back to the
+#            current tunnel URLs below — update here if either tunnel's
+#            domain ever changes, no commit needed)
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -29,15 +34,18 @@ on:
 permissions: {}
 
 jobs:
-  ipfs-health:
-    name: Check the Mac Mini's IPFS node is reachable
+  cluster-health:
+    name: Check the IPFS cluster (Mac Mini + follower)
     runs-on: ubuntu-latest
     env:
       IPFS_NODE_URL: ${{ vars.IPFS_NODE_URL || 'https://conclude-pavilion-condense.ngrok-free.dev' }}
+      CLUSTER_API_URL: ${{ vars.CLUSTER_API_URL || 'https://davids-mac-mini.taile2344b.ts.net/cluster' }}
       IPFS_SECRET: ${{ secrets.IPFS_SECRET }}
+      CLUSTER_API_USER: ${{ secrets.CLUSTER_API_USER }}
+      CLUSTER_API_PASSWORD: ${{ secrets.CLUSTER_API_PASSWORD }}
 
     steps:
-      - name: Check IPFS RPC API (via the Mac Mini agent's tunnel)
+      - name: Check IPFS RPC API (Mac Mini, via ipfs-AI-control's tunnel)
         run: |
           echo "Checking ${IPFS_NODE_URL}/api/v0/id ..."
           CODE=$(curl -s --max-time 20 -o /tmp/id.json -w "%{http_code}" \
@@ -49,13 +57,58 @@ jobs:
 
           if [ "$CODE" != "200" ]; then
             echo "IPFS_STATUS=DOWN" >> "$GITHUB_ENV"
-            echo "::error::IPFS node unreachable (HTTP ${CODE}) — uploads and file views are down, there is no second node any more"
+            echo "::error::IPFS node unreachable (HTTP ${CODE}) — uploads and file views are down"
+          else
+            PEER_ID=$(jq -r '.ID // "unknown"' /tmp/id.json 2>/dev/null || echo unknown)
+            echo "IPFS_STATUS=UP" >> "$GITHUB_ENV"
+            echo "OK: IPFS node reachable — peer ${PEER_ID}"
+          fi
+
+      - name: Check cluster membership (both peers)
+        run: |
+          CODE=$(curl -s --max-time 20 -o /tmp/peers.json -w "%{http_code}" \
+            -u "${CLUSTER_API_USER}:${CLUSTER_API_PASSWORD}" \
+            "${CLUSTER_API_URL}/peers" || echo 000)
+          echo "Cluster /peers → HTTP ${CODE}"
+
+          if [ "$CODE" != "200" ]; then
+            echo "CLUSTER_STATUS=UNKNOWN" >> "$GITHUB_ENV"
+            echo "PEER_COUNT=0" >> "$GITHUB_ENV"
+            echo "::warning::Cluster REST API unreachable (HTTP ${CODE}) — can't confirm follower node status"
+            exit 0
+          fi
+
+          # ipfs-cluster streams /peers as newline-delimited JSON objects, not
+          # a JSON array — slurp (-s) into one.
+          jq -s '.' /tmp/peers.json > /tmp/peers-norm.json 2>/dev/null || echo '[]' > /tmp/peers-norm.json
+          PEER_COUNT=$(jq 'length' /tmp/peers-norm.json 2>/dev/null || echo 0)
+          PEER_COUNT=${PEER_COUNT//[!0-9]/}; [ -z "$PEER_COUNT" ] && PEER_COUNT=0
+          echo "PEER_COUNT=${PEER_COUNT}" >> "$GITHUB_ENV"
+
+          if [ "$PEER_COUNT" -ge 2 ]; then
+            echo "CLUSTER_STATUS=UP" >> "$GITHUB_ENV"
+            echo "OK: ${PEER_COUNT} cluster peers visible"
+          elif [ "$PEER_COUNT" = 1 ]; then
+            echo "CLUSTER_STATUS=DEGRADED" >> "$GITHUB_ENV"
+            echo "::warning::Only 1 cluster peer visible — follower node (MacBook Air) may be down. No redundancy right now, but the Mac Mini alone still serves uploads/views."
+          else
+            echo "CLUSTER_STATUS=UNKNOWN" >> "$GITHUB_ENV"
+            echo "::warning::Could not parse peer list"
+          fi
+
+      - name: Evaluate
+        run: |
+          echo "════════ IPFS Cluster Health ════════"
+          echo "  IPFS (Mac Mini):   ${IPFS_STATUS:-UNKNOWN}"
+          echo "  Cluster:           ${CLUSTER_STATUS:-UNKNOWN}  (${PEER_COUNT:-0} peers)"
+          echo "═══════════════════════════════════"
+
+          if [ "${IPFS_STATUS:-UNKNOWN}" != "UP" ]; then
+            echo "::error::IPFS node is DOWN — this is a hard failure, uploads/views are broken, there's no fallback"
             exit 1
           fi
 
-          PEER_ID=$(jq -r '.ID // "unknown"' /tmp/id.json 2>/dev/null || echo unknown)
-          echo "IPFS_STATUS=UP" >> "$GITHUB_ENV"
-          echo "OK: IPFS node reachable — peer ${PEER_ID}"
+          echo "OK: IPFS up. Cluster: ${CLUSTER_STATUS:-UNKNOWN} (${PEER_COUNT:-0} peers) — a degraded cluster alone does not fail this check, since the Mac Mini still serves everything on its own."
 
       - name: Send SMS alert on failure (direct Twilio — no backend dependency)
         if: failure()
@@ -74,7 +127,7 @@ jobs:
             --user "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
             --data-urlencode "To=${ALERT_PHONE_NUMBER}" \
             --data-urlencode "From=${TWILIO_FROM_NUMBER}" \
-            --data-urlencode "Body=LegacyChain: IPFS node (Mac Mini) is DOWN $(date -u '+%Y-%m-%d %H:%M UTC') — uploads/views are affected, no second node exists any more. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --data-urlencode "Body=LegacyChain: IPFS node (Mac Mini) is DOWN $(date -u '+%Y-%m-%d %H:%M UTC') — uploads/views are affected. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Forward result to AI agent queue
         if: always()
@@ -90,5 +143,5 @@ jobs:
           curl -s --max-time 30 -X POST "$BACKEND_URL/api/internal/github-event" \
             -H "x-internal-secret: $INTERNAL_API_SECRET" \
             -H "Content-Type: application/json" \
-            -d "{\"workflow\":\"ipfs-health\",\"status\":\"${{ job.status }}\",\"ipfs\":\"${IPFS_STATUS:-UNKNOWN}\",\"repository\":\"${{ github.repository }}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            -d "{\"workflow\":\"cluster-health\",\"status\":\"${{ job.status }}\",\"ipfs\":\"${IPFS_STATUS:-UNKNOWN}\",\"cluster\":\"${CLUSTER_STATUS:-UNKNOWN}\",\"peer_count\":${PEER_COUNT:-0},\"repository\":\"${{ github.repository }}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
             || echo "WARN: could not reach backend (SMS path is independent)"
