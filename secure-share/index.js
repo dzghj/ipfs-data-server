@@ -1,6 +1,7 @@
 import { ipfs } from "./ipfs-client.js";
 import { generateKey, encrypt, decrypt, sha256 } from "./crypto-utils.js";
 import { anchorHash } from "./anchor.js";
+import { wrapKey, resolveFileKey } from "./key-wrap.js";
 import { FileRecord, AccessLog, Nominee } from "../db.js";
 import crypto from "crypto";
 
@@ -69,11 +70,13 @@ export async function secureUpload({ buffer, filename, ownerId, mimeType }) {
   const hash = sha256(buffer);
 
   const stored = await storeEncrypted({ encrypted, plaintextSha256: hash, filename, ownerId });
+  const wrapped = wrapKey(fileKey);
 
   return {
     ...stored,
     sha256Hash: hash,
-    encryptedFileKey: fileKey.toString("base64"),
+    encryptedFileKey: wrapped.value,
+    keyWrapped: wrapped.wrapped,
     iv: iv.toString("hex"),
     authTag: authTag.toString("hex"),
     filename,
@@ -117,11 +120,13 @@ export async function secureUploadClientEncrypted({
     filename,
     ownerId,
   });
+  const wrapped = wrapKey(Buffer.from(encKey, "base64"));
 
   return {
     ...stored,
     sha256Hash: plaintextSha256.toLowerCase(),
-    encryptedFileKey: encKey,
+    encryptedFileKey: wrapped.value,
+    keyWrapped: wrapped.wrapped,
     iv: encIv,
     authTag: encAuthTag,
     filename,
@@ -150,7 +155,7 @@ export async function secureView({ fileId, user }) {
 
   const encryptedBuffer = Buffer.concat(chunks);
   
-  const key = Buffer.from(file.encryptionKey, "base64");
+  const key = resolveFileKey(file);
   const iv = Buffer.from(file.iv, "hex");
   const authTag = Buffer.from(file.authTag, "hex");
 

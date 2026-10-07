@@ -8,6 +8,16 @@ import { notifyAgent } from "./notifyAgent.js";
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET || "supersecret";
+
+// verifyToken/resetToken are bearer credentials mailed to the user and looked
+// up by exact equality — never recovered, only compared — so they belong in
+// the DB as a one-way hash, same as passwordHash. The raw value only ever
+// exists in the email link; a DB leak alone no longer hands over a usable
+// link. hashToken() always returns the sha256 hex of whatever raw string is
+// handed to it.
+function hashToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 
@@ -38,10 +48,11 @@ router.post("/register", async (req, res) => {
     const verifyToken = crypto.randomBytes(32).toString("hex");
     const verifyTokenExpiry = Date.now() + 24 * 60 * 60 * 1000; // 24h
 
-    // Create user with no password yet
+    // Create user with no password yet — store only the hash; the raw token
+    // only ever exists in the email link (see hashToken() above).
     const user = await User.create({
       email,
-      verifyToken,
+      verifyToken: hashToken(verifyToken),
       verifyTokenExpiry,
       isVerified: false,
     });
@@ -81,7 +92,7 @@ router.post("/set-password/:token", async (req, res) => {
       return res.status(400).json({ message: "Password required" });
     }
 
-    const user = await User.findOne({ where: { verifyToken: token } });
+    const user = await User.findOne({ where: { verifyToken: hashToken(token) } });
 
     if (!user) {
       return res.status(404).json({ message: "Invalid token" });
@@ -141,7 +152,7 @@ router.post("/resend-verification", async (req, res) => {
     const verifyToken = crypto.randomBytes(32).toString("hex");
     const verifyTokenExpiry = Date.now() + 24 * 60 * 60 * 1000;
 
-    user.verifyToken = verifyToken;
+    user.verifyToken = hashToken(verifyToken);
     user.verifyTokenExpiry = verifyTokenExpiry;
 
     await user.save();
@@ -178,7 +189,7 @@ if (!token) {
 return res.status(400).json({ message: "Token required" });
 }
 
-const user = await User.findOne({ where: { verifyToken: token } });
+const user = await User.findOne({ where: { verifyToken: hashToken(token) } });
 
 if (!user) {
 return res.status(404).json({ message: "Invalid verification token" });
@@ -270,7 +281,7 @@ router.post("/forgot-password", async (req, res) => {
     const resetToken = crypto.randomBytes(32).toString("hex");
     const expiry = Date.now() + 15 * 60 * 1000;
 
-    user.resetToken = resetToken;
+    user.resetToken = hashToken(resetToken);
     user.resetTokenExpiry = expiry;
     await user.save();
 
@@ -308,7 +319,7 @@ router.post("/forgot-password", async (req, res) => {
 /* ===== Reset Password ===== */
 router.post("/reset-password", async (req, res) => {
   const { token, newPassword } = req.body;
-  const user = await User.findOne({ where: { resetToken: token } });
+  const user = await User.findOne({ where: { resetToken: hashToken(token) } });
   if (!user) return res.status(400).json({ message: "Invalid token" });
   if (Date.now() > user.resetTokenExpiry) return res.status(400).json({ message: "Token expired" });
 

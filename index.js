@@ -10,9 +10,10 @@ import { Resend } from "resend";
 import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat, SupportMessage } from "./db.js";
 import { Op } from "sequelize";
 import { secureUpload, secureUploadClientEncrypted, secureView } from "./secure-share/index.js";
+import { resolveFileKey } from "./secure-share/key-wrap.js";
 import { upgradeProof, verifyProof } from "./secure-share/anchor.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
-import { decrypt } from "./secure-share/crypto-utils.js";
+import { decrypt, sha256 } from "./secure-share/crypto-utils.js";
 import { buildHealthPayload, isAuthorizedInternalRequest } from "./monitoring.js";
 import { notifyAgent, enqueueGithubEvent } from "./notifyAgent.js";
 import crypto from "crypto";
@@ -508,6 +509,7 @@ app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
       otsProof: result.otsProof,
       otsAnchoredAt: result.otsAnchoredAt,
       encryptionKey: result.encryptedFileKey,
+      keyWrapped: result.keyWrapped,
       iv: result.iv, // hex string    
       authTag: result.authTag, // hex string   
       mimeType: declaredMime,
@@ -975,11 +977,14 @@ app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
       console.log("Nominee access link (no RESEND):", link);
     }
 
-    // Record this send so the resend scheduler can track it
+    // Record this send so the resend scheduler can track it. The JWT itself
+    // is a usable bearer credential (jwt.verify() checks it by signature, not
+    // by DB lookup — nothing ever reads this column back to rebuild a link,
+    // every resend mints a fresh one), so only its hash is stored.
     await NomineeAccessSend.create({
       nomineeId:  nominee.id,
       ownerId:    req.user.id,
-      token,
+      token:      sha256(token),
       sendCount:  1,
       lastSentAt: new Date(),
     });
@@ -1105,7 +1110,7 @@ app.get("/api/nominee-access/:fileId", async (req, res) => {
     }
     const encryptedBuffer = Buffer.concat(chunks);
 
-    const key = Buffer.from(file.encryptionKey, "base64");
+    const key = resolveFileKey(file);
     const iv = Buffer.from(file.iv, "hex");
     const authTag = Buffer.from(file.authTag, "hex");
 
@@ -1459,11 +1464,11 @@ app.post("/api/internal/run-resend-check", async (req, res) => {
         console.log(`[RESEND CHECK] No RESEND configured. Link for ${nominee.email}:`, link);
       }
 
-      // Update the record
+      // Update the record (hash only — see the create() site above)
       await record.update({
         sendCount:  record.sendCount + 1,
         lastSentAt: new Date(),
-        token:      newToken,
+        token:      sha256(newToken),
       });
 
       results.push({

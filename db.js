@@ -20,12 +20,15 @@ export const User = sequelize.define(
     email:          { type: DataTypes.STRING,  allowNull: false, unique: true },
     passwordHash:   { type: DataTypes.STRING,  allowNull: true },
 
-    // Email verification
+    // Email verification. Stores sha256(rawToken), not the raw token itself —
+    // same one-way treatment as passwordHash, since this is only ever
+    // compared (auth.js's hashToken()), never recovered. The raw value lives
+    // only in the emailed link.
     verifyToken:       { type: DataTypes.STRING, allowNull: true },
     verifyTokenExpiry: { type: DataTypes.BIGINT, allowNull: true },
     isVerified:        { type: DataTypes.BOOLEAN, defaultValue: false },
 
-    // Password reset
+    // Password reset. Same sha256(rawToken)-only treatment as verifyToken.
     resetToken:       { type: DataTypes.TEXT,   allowNull: true },
     resetTokenExpiry: { type: DataTypes.BIGINT, allowNull: true },
 
@@ -84,6 +87,12 @@ export const FileRecord = sequelize.define(
 
     // Encryption
     encryptionKey: { type: DataTypes.TEXT,   allowNull: true },
+    // true once encryptionKey is wrapped (AES-256-GCM under FILE_ENCRYPTION_KEY,
+    // see secure-share/key-wrap.js) rather than a raw plaintext base64 key —
+    // false for files uploaded before envelope encryption existed, or while
+    // FILE_ENCRYPTION_KEY isn't set; resolveFileKey() handles both
+    // transparently, no backfill needed.
+    keyWrapped:    { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     iv:            { type: DataTypes.TEXT,   allowNull: true },
     authTag:       { type: DataTypes.TEXT,   allowNull: true },
     mimeType:      { type: DataTypes.STRING, allowNull: true },
@@ -157,6 +166,10 @@ export const NomineeAccessSend = sequelize.define(
     id:          { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
     nomineeId:   { type: DataTypes.INTEGER, allowNull: false },
     ownerId:     { type: DataTypes.INTEGER, allowNull: false },
+    // sha256(jwt) — stored only as a record of what was sent; nothing looks
+    // this column up to grant access (the JWT is verified by signature, see
+    // GET /api/nominee-access in index.js), and every resend mints a fresh
+    // token rather than re-reading this one, so the raw JWT need not be kept.
     token:       { type: DataTypes.TEXT,    allowNull: false },
     sendCount:   { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 }, // 1 = initial, 2 = first resend, 3 = second resend
     lastSentAt:  { type: DataTypes.DATE,    allowNull: false, defaultValue: Sequelize.NOW },
@@ -234,7 +247,7 @@ export const SupportMessage = sequelize.define(
 
 // sequelize.sync() is skipped in production, so tables added after the initial
 // deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS / ADD
-// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..008;
+// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..009;
 // keep in sync with the FileRecord, NomineeAccessSend, AgentEvent, AgentHeartbeat and
 // SupportMessage models above.
 const BOOTSTRAP_SQL = `
@@ -298,6 +311,7 @@ const BOOTSTRAP_SQL = `
   ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "otsProof" TEXT;
   ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "otsAnchoredAt" TIMESTAMP WITH TIME ZONE;
   ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "otsUpgradedAt" TIMESTAMP WITH TIME ZONE;
+  ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "keyWrapped" BOOLEAN NOT NULL DEFAULT false;
 `;
 
 /* ===== Init ===== */
