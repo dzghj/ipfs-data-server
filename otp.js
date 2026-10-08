@@ -1,6 +1,7 @@
-// Login 2FA: generate, hash, and deliver one-time codes via SMS (preferred)
-// or email (fallback). See db.js's User.otp* columns and auth.js's
-// /login, /login/verify-otp, /login/resend-otp.
+// Login 2FA: generate, hash, and deliver one-time codes via SMS or email —
+// the user picks which, after their password is checked. See db.js's
+// User.otp* columns and auth.js's /login, /login/send-otp,
+// /login/verify-otp.
 
 import crypto from "crypto";
 import twilio from "twilio";
@@ -21,7 +22,7 @@ const twilioClient = (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN)
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 if (!twilioClient) {
-  console.warn("⚠️  TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN not set — login OTP will fall back to email for every user.");
+  console.warn("⚠️  TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN not set — SMS won't be offered as a login OTP option for any user.");
 }
 
 /** 6-digit numeric code, cryptographically random (not Math.random). */
@@ -54,31 +55,46 @@ async function sendOtpEmail(email, code) {
 }
 
 /**
- * Deliver a login OTP: SMS first if the user has a phone on file, falling
- * back to email if SMS isn't configured, fails to send, or there's no phone
- * at all (accounts created before phone was required at registration). If
- * neither channel is configured (local dev with no Twilio/Resend keys), logs
- * the code to the console instead of throwing — matches the existing
- * dev-friendly fallback auth.js already uses for verify/reset links.
- * @returns {Promise<"sms"|"email"|"console">}
+ * Which channels this user can actually receive a login OTP on, for the
+ * frontend to offer as choices after the password step. SMS only appears
+ * when both a phone is on file AND Twilio is configured — offering a
+ * channel that's guaranteed to fail is worse than not offering it. Email
+ * always appears: if Resend isn't configured (local dev), sendOtpToChannel()
+ * logs the code to the console instead of sending, rather than the channel
+ * silently not existing.
+ * @returns {("sms"|"email")[]}
  */
-export async function deliverOtp(user, code) {
-  if (user.phone) {
-    try {
-      await sendOtpSms(user.phone, code);
-      return "sms";
-    } catch (err) {
-      console.warn(`[OTP] SMS failed for user ${user.id}, falling back to email:`, err.message);
+export function getAvailableChannels(user) {
+  const channels = [];
+  if (user.phone && twilioClient) channels.push("sms");
+  channels.push("email");
+  return channels;
+}
+
+/**
+ * Send a login OTP via the specific channel the user chose. Does NOT fall
+ * back to another channel on failure — the user picked this one on purpose,
+ * so a failure should be reported back (the frontend can offer to try a
+ * different channel), not silently swapped underneath them.
+ * @param {"sms"|"email"} channel
+ */
+export async function sendOtpToChannel(user, channel, code) {
+  if (channel === "sms") {
+    if (!user.phone) throw new Error("No phone number on file");
+    await sendOtpSms(user.phone, code);
+    return;
+  }
+
+  if (channel === "email") {
+    if (resend) {
+      await sendOtpEmail(user.email, code);
+    } else {
+      console.warn(`[OTP] RESEND_API_KEY not set — code for ${user.email} is: ${code} (dev fallback, logged only, not sent)`);
     }
+    return;
   }
 
-  if (resend) {
-    await sendOtpEmail(user.email, code);
-    return "email";
-  }
-
-  console.warn(`[OTP] No SMS/email configured — code for ${user.email} is: ${code} (dev fallback, logged only, not sent)`);
-  return "console";
+  throw new Error(`Unknown OTP channel: ${channel}`);
 }
 
 /** "+1*******34" — last 2 digits visible, for the client to show "code sent to ...". */

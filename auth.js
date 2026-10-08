@@ -10,7 +10,8 @@ import {
   OTP_MAX_ATTEMPTS,
   generateOtpCode,
   hashOtp,
-  deliverOtp,
+  getAvailableChannels,
+  sendOtpToChannel,
   maskPhone,
   maskEmail,
 } from "./otp.js";
@@ -257,10 +258,10 @@ res.status(500).json({ message: "Internal error" });
 /* ==============================
    LOGIN
 ================================ */
-// Step 1: check password, then issue an OTP challenge instead of the final
-// login token. The real token isn't handed out until /login/verify-otp
-// succeeds — see otp.js for delivery and the module comment above for why
-// pendingToken is a separate, narrowly-scoped JWT.
+// Step 1: check the password only. No OTP is sent yet — the user picks a
+// channel next (see /login/send-otp), rather than one being auto-chosen for
+// them. pendingToken just proves the password check passed; it carries no
+// OTP and no vault access.
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -280,25 +281,74 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
+    res.json({
+      passwordValid: true,
+      availableChannels: getAvailableChannels(user),
+      pendingToken: signOtpPending(user.id),
+    });
+
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ message: "Login failed" });
+  }
+});
+
+// Step 2: send (or re-send, or switch channel for) the OTP, to whichever
+// channel the user picked. Callable repeatedly against the same
+// pendingToken — the frontend uses this both for the initial send and for
+// "resend"/"try a different method". Re-derives availableChannels itself
+// rather than trusting the client's choice blindly.
+router.post("/login/send-otp", async (req, res) => {
+  try {
+    const { pendingToken, channel } = req.body;
+    if (!pendingToken || !channel) {
+      return res.status(400).json({ message: "pendingToken and channel are required" });
+    }
+
+    let payload;
+    try {
+      payload = verifyOtpPending(pendingToken);
+    } catch (err) {
+      return res.status(401).json({ message: "Login session expired — please log in again" });
+    }
+
+    const user = await User.findByPk(payload.id);
+    if (!user) {
+      return res.status(401).json({ message: "Login session expired — please log in again" });
+    }
+
+    const availableChannels = getAvailableChannels(user);
+    if (!availableChannels.includes(channel)) {
+      return res.status(400).json({ message: `"${channel}" isn't available for this account`, availableChannels });
+    }
+
     const code = generateOtpCode();
+    try {
+      await sendOtpToChannel(user, channel, code);
+    } catch (err) {
+      console.error(`[OTP] send failed (${channel}) for user ${user.id}:`, err.message);
+      return res.status(502).json({ message: `Couldn't send a code via ${channel} — try a different option.`, availableChannels });
+    }
+
+    // Only persist once the send actually succeeded — a failed attempt
+    // shouldn't invalidate whatever code might already be pending.
     user.otpCode = hashOtp(code);
     user.otpExpiry = Date.now() + OTP_TTL_MS;
-    user.otpAttempts = 0;
-    const channel = await deliverOtp(user, code);
     user.otpChannel = channel;
+    user.otpAttempts = 0;
     await user.save();
 
     res.json({
       otpRequired: true,
       channel,
       maskedDestination: channel === "sms" ? maskPhone(user.phone) : maskEmail(user.email),
-      pendingToken: signOtpPending(user.id),
+      pendingToken,
       expiresInSeconds: OTP_TTL_MS / 1000,
     });
 
   } catch (err) {
-    console.error("Login error:", err);
-    res.status(500).json({ message: "Login failed" });
+    console.error("OTP send error:", err);
+    res.status(500).json({ message: "Failed to send code" });
   }
 });
 
@@ -370,50 +420,6 @@ router.post("/login/verify-otp", async (req, res) => {
     res.status(500).json({ message: "Login failed" });
   }
 });
-
-// Re-send a fresh code against the same pending login (e.g. the first SMS
-// never arrived within its 2-minute window). Resets attempts too.
-router.post("/login/resend-otp", async (req, res) => {
-  try {
-    const { pendingToken } = req.body;
-    if (!pendingToken) {
-      return res.status(400).json({ message: "pendingToken is required" });
-    }
-
-    let payload;
-    try {
-      payload = verifyOtpPending(pendingToken);
-    } catch (err) {
-      return res.status(401).json({ message: "Login session expired — please log in again" });
-    }
-
-    const user = await User.findByPk(payload.id);
-    if (!user) {
-      return res.status(401).json({ message: "Login session expired — please log in again" });
-    }
-
-    const code = generateOtpCode();
-    user.otpCode = hashOtp(code);
-    user.otpExpiry = Date.now() + OTP_TTL_MS;
-    user.otpAttempts = 0;
-    const channel = await deliverOtp(user, code);
-    user.otpChannel = channel;
-    await user.save();
-
-    res.json({
-      otpRequired: true,
-      channel,
-      maskedDestination: channel === "sms" ? maskPhone(user.phone) : maskEmail(user.email),
-      pendingToken,
-      expiresInSeconds: OTP_TTL_MS / 1000,
-    });
-
-  } catch (err) {
-    console.error("OTP resend error:", err);
-    res.status(500).json({ message: "Failed to resend code" });
-  }
-});
-
 
 /* ===== Forgot Password ===== */
 router.post("/forgot-password", async (req, res) => {
