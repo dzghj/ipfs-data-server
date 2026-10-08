@@ -20,6 +20,11 @@ export const User = sequelize.define(
     email:          { type: DataTypes.STRING,  allowNull: false, unique: true },
     passwordHash:   { type: DataTypes.STRING,  allowNull: true },
 
+    // Required at registration going forward (see auth.js's /register) — the
+    // destination for login OTP codes (otp.js). Nullable because accounts
+    // created before this existed have none; those fall back to email OTP.
+    phone: { type: DataTypes.STRING, allowNull: true },
+
     // Email verification. Stores sha256(rawToken), not the raw token itself —
     // same one-way treatment as passwordHash, since this is only ever
     // compared (auth.js's hashToken()), never recovered. The raw value lives
@@ -31,6 +36,16 @@ export const User = sequelize.define(
     // Password reset. Same sha256(rawToken)-only treatment as verifyToken.
     resetToken:       { type: DataTypes.TEXT,   allowNull: true },
     resetTokenExpiry: { type: DataTypes.BIGINT, allowNull: true },
+
+    // Login 2FA (otp.js + auth.js's /login, /login/verify-otp,
+    // /login/resend-otp). otpCode is sha256(rawCode) — same one-way
+    // treatment as every other token on this model; the raw 6-digit code
+    // only ever exists in the SMS/email it was sent in. otpAttempts guards
+    // against brute-forcing a 6-digit code within its 2-minute window.
+    otpCode:     { type: DataTypes.STRING,  allowNull: true },
+    otpExpiry:   { type: DataTypes.BIGINT,  allowNull: true },
+    otpChannel:  { type: DataTypes.STRING,  allowNull: true }, // "sms" | "email" | "console"
+    otpAttempts: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
 
     // Plan
     planId:        { type: DataTypes.INTEGER, allowNull: true },
@@ -247,7 +262,7 @@ export const SupportMessage = sequelize.define(
 
 // sequelize.sync() is skipped in production, so tables added after the initial
 // deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS / ADD
-// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..009;
+// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..010;
 // keep in sync with the FileRecord, NomineeAccessSend, AgentEvent, AgentHeartbeat and
 // SupportMessage models above.
 const BOOTSTRAP_SQL = `
@@ -312,6 +327,13 @@ const BOOTSTRAP_SQL = `
   ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "otsAnchoredAt" TIMESTAMP WITH TIME ZONE;
   ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "otsUpgradedAt" TIMESTAMP WITH TIME ZONE;
   ALTER TABLE public."FileRecords" ADD COLUMN IF NOT EXISTS "keyWrapped" BOOLEAN NOT NULL DEFAULT false;
+
+  -- Login 2FA (see migrations/010_users_login_otp.sql for the full comment).
+  ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "phone" TEXT;
+  ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "otpCode" TEXT;
+  ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "otpExpiry" BIGINT;
+  ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "otpChannel" TEXT;
+  ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "otpAttempts" INTEGER NOT NULL DEFAULT 0;
 `;
 
 /* ===== Init ===== */
