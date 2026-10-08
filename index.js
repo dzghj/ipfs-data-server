@@ -753,6 +753,41 @@ app.post("/api/file/:id/toggle-protection", auth, async (req, res) => {
   }
 });
 
+/* ===== Delete File =====
+   Removes the FileRecord row (and its encryption key) only — the encrypted
+   bytes already on IPFS are left pinned. Destroying the key is what actually
+   matters here: without it that ciphertext is permanently unrecoverable, so
+   this is a real deletion from the user's and the app's perspective, even
+   though the underlying blocks aren't explicitly unpinned (see secure-share/
+   key-wrap.js and crypto-utils.js — there is no "undo" once this runs). */
+app.delete("/api/file/:id", auth, async (req, res) => {
+  try {
+    const file = await FileRecord.findOne({
+      where: { id: req.params.id, userId: req.user.id }, // security: only owner can delete
+    });
+
+    if (!file) {
+      return res.status(404).json({ message: "File not found" });
+    }
+
+    await AccessLog.create({
+      actorEmail: req.user.email || null,
+      role: "User",
+      action: "DELETE_FILE",
+      fileId: file.id,
+      ipAddress: req.ip,
+      note: file.filename,
+    });
+
+    await file.destroy();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Delete file failed:", err);
+    res.status(500).json({ message: "Failed to delete file" });
+  }
+});
+
 /* ===== My Files ===== */
 app.get("/api/myfiles", auth, async (req, res) => {
   try {
