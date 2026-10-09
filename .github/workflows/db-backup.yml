@@ -1,0 +1,114 @@
+name: Database Backup
+
+# Supabase's Free plan has NO automatic backups at all - this is the safety
+# net. Runs pg_dump against the live database, then ships the dump to the
+# Mac Mini over Tailscale (this runner joins the tailnet just for this job
+# via the official tailscale/github-action) using a dedicated, restricted
+# SSH key that can ONLY run ~/scripts/receive-db-backup.sh on the Mac Mini -
+# see that key's "command=" restriction in the Mac Mini's
+# ~/.ssh/authorized_keys. Even if MACMINI_BACKUP_SSH_KEY leaked, it could
+# only write backup files, nothing else (no shell, no port forwarding).
+# That script also prunes down to the last 12 backups so the directory
+# doesn't grow unbounded.
+#
+# Config — Settings → Secrets and variables → Actions:
+#   secrets: DATABASE_URL (the Supabase connection string - same value
+#              db.js reads), TAILSCALE_AUTHKEY (generate at
+#              https://login.tailscale.com/admin/settings/keys - reusable +
+#              ephemeral recommended), MACMINI_BACKUP_SSH_KEY (the dedicated
+#              private key, not your personal one),
+#              BACKEND_URL, INTERNAL_API_SECRET, TWILIO_*, ALERT_PHONE_NUMBER
+
+on:
+  schedule:
+    - cron: "0 5 * * 0" # Sunday 5am UTC
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  db-backup:
+    name: pg_dump Supabase -> Mac Mini
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Connect to tailnet
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+      - name: Install a modern pg_dump (PGDG repo, matches Supabase's server version better than Ubuntu's default)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+          /usr/lib/postgresql/16/bin/pg_dump --version
+
+      - name: Dump the database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::DATABASE_URL secret not set"
+            exit 1
+          fi
+          /usr/lib/postgresql/16/bin/pg_dump "$DATABASE_URL" -F c -f /tmp/backup.dump
+          SIZE=$(wc -c < /tmp/backup.dump)
+          echo "BACKUP_SIZE=${SIZE}" >> "$GITHUB_ENV"
+          echo "Dumped ${SIZE} bytes"
+          if [ "$SIZE" -lt 100 ]; then
+            echo "::error::Dump suspiciously small (${SIZE} bytes) - treating as a failure rather than shipping a near-empty backup"
+            exit 1
+          fi
+
+      - name: Ship it to the Mac Mini
+        env:
+          MACMINI_BACKUP_SSH_KEY: ${{ secrets.MACMINI_BACKUP_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null /tmp/backup_key
+          echo "$MACMINI_BACKUP_SSH_KEY" > /tmp/backup_key
+          ssh -i /tmp/backup_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+            david@100.73.92.84 < /tmp/backup.dump
+          echo "BACKUP_STATUS=UP" >> "$GITHUB_ENV"
+
+      - name: Clean up local dump
+        if: always()
+        run: rm -f /tmp/backup.dump /tmp/backup_key
+
+      - name: Send SMS alert on failure (direct Twilio — no backend dependency)
+        if: failure()
+        env:
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ALERT_PHONE_NUMBER: ${{ secrets.ALERT_PHONE_NUMBER }}
+        run: |
+          if [ -z "$TWILIO_ACCOUNT_SID" ] || [ -z "$ALERT_PHONE_NUMBER" ]; then
+            echo "Twilio secrets not set - skipping SMS"
+            exit 0
+          fi
+          curl -s -w "\nHTTP:%{http_code}\n" \
+            -X POST "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json" \
+            --user "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
+            --data-urlencode "To=${ALERT_PHONE_NUMBER}" \
+            --data-urlencode "From=${TWILIO_FROM_NUMBER}" \
+            --data-urlencode "Body=LegacyChain: weekly DB backup FAILED $(date -u '+%Y-%m-%d %H:%M UTC') — Supabase Free has no backups of its own, this needs attention. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Forward result to AI agent queue
+        if: always()
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          INTERNAL_API_SECRET: ${{ secrets.INTERNAL_API_SECRET }}
+        run: |
+          if [ -z "$BACKEND_URL" ]; then
+            echo "BACKEND_URL secret not set - skipping agent notify"
+            exit 0
+          fi
+          BACKEND_URL=$(echo "$BACKEND_URL" | sed 's|/$||')
+          curl -s --max-time 30 -X POST "$BACKEND_URL/api/internal/github-event" \
+            -H "x-internal-secret: $INTERNAL_API_SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"workflow\":\"db-backup\",\"status\":\"${{ job.status }}\",\"bytes\":${BACKUP_SIZE:-0},\"repository\":\"${{ github.repository }}\",\"run_url\":\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+            || echo "WARN: could not reach backend (SMS path is independent)"
