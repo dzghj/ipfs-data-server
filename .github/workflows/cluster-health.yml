@@ -51,10 +51,17 @@ jobs:
     steps:
       - name: Check IPFS RPC API (Mac Mini, via Tailscale Funnel — the real production path)
         run: |
-          echo "Checking ${IPFS_NODE_URL}/api/v0/id ..."
-          CODE=$(curl -s --max-time 20 -o /tmp/id.json -w "%{http_code}" \
+          # ipfs-AI-control's proxy (fronting Kubo) only allows /api/v0/add,
+          # /api/v0/cat, /api/v0/pin/add through — /api/v0/id got 403'd once
+          # that allowlist landed (see ipfs-AI-control's src/server.js). This
+          # adds a tiny throwaway blob instead, which is both allowed and a
+          # more faithful check anyway: it exercises the exact write path
+          # real uploads use, not just a bare liveness ping.
+          echo "Checking ${IPFS_NODE_URL}/api/v0/add ..."
+          CODE=$(echo "cluster-health-check $(date -u +%s)" | curl -s --max-time 20 -o /tmp/id.json -w "%{http_code}" \
             -X POST -H "X-Secret-Key: ${IPFS_SECRET}" \
-            "${IPFS_NODE_URL}/api/v0/id" || echo 000)
+            -F "file=@-" \
+            "${IPFS_NODE_URL}/api/v0/add" || echo 000)
           echo "HTTP ${CODE}"
           cat /tmp/id.json 2>/dev/null || true
           echo
@@ -63,9 +70,9 @@ jobs:
             echo "IPFS_STATUS=DOWN" >> "$GITHUB_ENV"
             echo "::error::IPFS node unreachable (HTTP ${CODE}) — uploads and file views are down"
           else
-            PEER_ID=$(jq -r '.ID // "unknown"' /tmp/id.json 2>/dev/null || echo unknown)
+            CID=$(jq -r '.Hash // "unknown"' /tmp/id.json 2>/dev/null || echo unknown)
             echo "IPFS_STATUS=UP" >> "$GITHUB_ENV"
-            echo "OK: IPFS node reachable — peer ${PEER_ID}"
+            echo "OK: IPFS node reachable — test blob pinned as ${CID}"
           fi
 
       - name: Check cluster membership (both peers)
