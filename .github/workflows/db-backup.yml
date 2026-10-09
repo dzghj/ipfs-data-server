@@ -43,8 +43,8 @@ jobs:
           curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
           echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo "$VERSION_CODENAME")-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
-          sudo apt-get install -y postgresql-client-16
-          /usr/lib/postgresql/16/bin/pg_dump --version
+          sudo apt-get install -y postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
 
       - name: Dump the database
         env:
@@ -54,7 +54,7 @@ jobs:
             echo "::error::DATABASE_URL secret not set"
             exit 1
           fi
-          /usr/lib/postgresql/16/bin/pg_dump "$DATABASE_URL" -F c -f /tmp/backup.dump
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" -F c -f /tmp/backup.dump
           SIZE=$(wc -c < /tmp/backup.dump)
           echo "BACKUP_SIZE=${SIZE}" >> "$GITHUB_ENV"
           echo "Dumped ${SIZE} bytes"
