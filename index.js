@@ -9,7 +9,7 @@ import jwt from "jsonwebtoken";
 import { Resend } from "resend";
 import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat, SupportMessage } from "./db.js";
 import { Op } from "sequelize";
-import { secureUpload, secureUploadClientEncrypted, secureView, unpinCid } from "./secure-share/index.js";
+import { secureUploadClientEncrypted, secureView, unpinCid } from "./secure-share/index.js";
 import { resolveFileKey } from "./secure-share/key-wrap.js";
 import { upgradeProof, verifyProof } from "./secure-share/anchor.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
@@ -469,12 +469,25 @@ app.post("/api/upload", auth, uploadLimiter, upload.single("file"), async (req, 
       "text/plain"
     ];
 
+    // Client-side encryption is mandatory, not opt-in — this used to fall
+    // back to secureUpload() (server generates and sees the key) whenever a
+    // caller omitted clientEncrypted, which meant any client that forgot
+    // the flag — an old cached frontend build, a direct API call — silently
+    // got the weaker, server-sees-plaintext path. The real app
+    // (src/utils/crypto.js's buildEncryptedUpload) always sets this, so
+    // enforcing it here costs the live app nothing.
+    const clientEncrypted = req.body.clientEncrypted === "1" || req.body.clientEncrypted === "true";
+    if (!clientEncrypted) {
+      return res.status(400).json({
+        message: "Uploads must be encrypted client-side before sending — this server never generates or sees your file's encryption key. If you're using the official app, please refresh and try again.",
+      });
+    }
+
     // Client-side encrypted uploads arrive as application/octet-stream ciphertext
     // (see the frontend's src/utils/crypto.js), so validate the caller-declared
     // original type/name instead of multer's detected ones.
-    const clientEncrypted = req.body.clientEncrypted === "1" || req.body.clientEncrypted === "true";
-    const declaredMime = clientEncrypted ? req.body.mimeType : req.file.mimetype;
-    const declaredName = clientEncrypted ? (req.body.originalName || req.file.originalname) : req.file.originalname;
+    const declaredMime = req.body.mimeType;
+    const declaredName = req.body.originalName || req.file.originalname;
 
     if (!allowedMimeTypes.includes(declaredMime)) {
       return res.status(400).json({ message: "Unsupported file type" });
@@ -483,24 +496,16 @@ app.post("/api/upload", auth, uploadLimiter, upload.single("file"), async (req, 
     // Optional: sanitize filename
     const safeFilename = String(declaredName || "file").replace(/[^a-zA-Z0-9.\-_]/g, "_");
 
-    const result = clientEncrypted
-      ? await secureUploadClientEncrypted({
-          encryptedBuffer: req.file.buffer,
-          encKey: req.body.encKey,
-          encIv: req.body.encIv,
-          encAuthTag: req.body.encAuthTag,
-          plaintextSha256: req.body.plaintextSha256,
-          filename: safeFilename,
-          ownerId: req.user.id,
-          mimeType: declaredMime,
-        })
-      : await secureUpload({
-          buffer: req.file.buffer,
-          filename: safeFilename,
-          ownerId: req.user.id,
-          mimeType: req.file.mimetype,
-          category: req.body.category || "Personal",
-        });
+    const result = await secureUploadClientEncrypted({
+      encryptedBuffer: req.file.buffer,
+      encKey: req.body.encKey,
+      encIv: req.body.encIv,
+      encAuthTag: req.body.encAuthTag,
+      plaintextSha256: req.body.plaintextSha256,
+      filename: safeFilename,
+      ownerId: req.user.id,
+      mimeType: declaredMime,
+    });
 
     const record = await FileRecord.create({
       userId: req.user.id,
