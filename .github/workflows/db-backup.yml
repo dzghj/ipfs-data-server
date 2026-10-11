@@ -11,12 +11,23 @@ name: Database Backup
 # That script also prunes down to the last 12 backups so the directory
 # doesn't grow unbounded.
 #
+# The dump is AES-256 encrypted (openssl, PBKDF2-stretched passphrase)
+# BEFORE it ever leaves this runner — every FileRecord row includes that
+# file's own per-file encryption key (wrapped under FILE_ENCRYPTION_KEY if
+# that's set on Render, plaintext otherwise), so an unencrypted dump sitting
+# on a laptop's disk would be a real key-exposure path, not just a DB
+# leak. ~/scripts/load-latest-backup.sh on the Mac Mini decrypts before
+# restoring, using the same passphrase kept in a local file there
+# (~/.backup-encryption-key, 600 perms) — not this repo.
+#
 # Config — Settings → Secrets and variables → Actions:
 #   secrets: DATABASE_URL (the Supabase connection string - same value
 #              db.js reads), TAILSCALE_AUTHKEY (generate at
 #              https://login.tailscale.com/admin/settings/keys - reusable +
 #              ephemeral recommended), MACMINI_BACKUP_SSH_KEY (the dedicated
-#              private key, not your personal one),
+#              private key, not your personal one), BACKUP_ENCRYPTION_KEY
+#              (must match the passphrase in the Mac Mini's
+#              ~/.backup-encryption-key),
 #              BACKEND_URL, INTERNAL_API_SECRET, TWILIO_*, ALERT_PHONE_NUMBER
 
 on:
@@ -63,6 +74,24 @@ jobs:
             exit 1
           fi
 
+      - name: Encrypt the dump before it leaves this runner
+        env:
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.BACKUP_ENCRYPTION_KEY }}
+        run: |
+          if [ -z "$BACKUP_ENCRYPTION_KEY" ]; then
+            echo "::error::BACKUP_ENCRYPTION_KEY secret not set - refusing to ship an unencrypted dump"
+            exit 1
+          fi
+          # The dump contains every user's per-file encryption key (wrapped
+          # or not, depending on whether FILE_ENCRYPTION_KEY is set on
+          # Render) - it must never land on the Mac Mini's disk in the
+          # clear. AES-256, PBKDF2-stretched passphrase (same approach as
+          # the one-off manual commands used earlier in this project).
+          openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BACKUP_ENCRYPTION_KEY \
+            -in /tmp/backup.dump -out /tmp/backup.dump.enc
+          rm -f /tmp/backup.dump
+          echo "Encrypted: $(wc -c < /tmp/backup.dump.enc) bytes"
+
       - name: Ship it to the Mac Mini
         env:
           MACMINI_BACKUP_SSH_KEY: ${{ secrets.MACMINI_BACKUP_SSH_KEY }}
@@ -70,12 +99,12 @@ jobs:
           install -m 600 /dev/null /tmp/backup_key
           echo "$MACMINI_BACKUP_SSH_KEY" > /tmp/backup_key
           ssh -i /tmp/backup_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
-            david@100.73.92.84 < /tmp/backup.dump
+            david@100.73.92.84 < /tmp/backup.dump.enc
           echo "BACKUP_STATUS=UP" >> "$GITHUB_ENV"
 
       - name: Clean up local dump
         if: always()
-        run: rm -f /tmp/backup.dump /tmp/backup_key
+        run: rm -f /tmp/backup.dump /tmp/backup.dump.enc /tmp/backup_key
 
       - name: Send SMS alert on failure (direct Twilio — no backend dependency)
         if: failure()

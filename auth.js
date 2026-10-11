@@ -15,6 +15,7 @@ import {
   maskPhone,
   maskEmail,
 } from "./otp.js";
+import { loginLimiter } from "./rateLimiters.js";
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET || "supersecret";
@@ -262,7 +263,7 @@ res.status(500).json({ message: "Internal error" });
 // channel next (see /login/send-otp), rather than one being auto-chosen for
 // them. pendingToken just proves the password check passed; it carries no
 // OTP and no vault access.
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -356,7 +357,7 @@ router.post("/login/send-otp", async (req, res) => {
 // that actually completes a login — loginAt/lastLogin, the login_token JWT,
 // and the user_login notifyAgent event all moved here from the old
 // single-step /login.
-router.post("/login/verify-otp", async (req, res) => {
+router.post("/login/verify-otp", loginLimiter, async (req, res) => {
   try {
     const { pendingToken, code } = req.body;
     if (!pendingToken || !code) {

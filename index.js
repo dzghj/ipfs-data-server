@@ -9,13 +9,14 @@ import jwt from "jsonwebtoken";
 import { Resend } from "resend";
 import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat, SupportMessage } from "./db.js";
 import { Op } from "sequelize";
-import { secureUpload, secureUploadClientEncrypted, secureView } from "./secure-share/index.js";
+import { secureUpload, secureUploadClientEncrypted, secureView, unpinCid } from "./secure-share/index.js";
 import { resolveFileKey } from "./secure-share/key-wrap.js";
 import { upgradeProof, verifyProof } from "./secure-share/anchor.js";
 import { ipfs } from "./secure-share/ipfs-client.js";
 import { decrypt, sha256 } from "./secure-share/crypto-utils.js";
 import { buildHealthPayload, isAuthorizedInternalRequest } from "./monitoring.js";
 import { notifyAgent, enqueueGithubEvent } from "./notifyAgent.js";
+import { uploadLimiter } from "./rateLimiters.js";
 import crypto from "crypto";
 
 
@@ -451,7 +452,7 @@ app.post("/api/internal/run-resend-check", async (req, res) => {
 });
 
 /* ===== Upload Route ===== */
-app.post("/api/upload", auth, upload.single("file"), async (req, res) => {
+app.post("/api/upload", auth, uploadLimiter, upload.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
@@ -754,12 +755,17 @@ app.post("/api/file/:id/toggle-protection", auth, async (req, res) => {
 });
 
 /* ===== Delete File =====
-   Removes the FileRecord row (and its encryption key) only — the encrypted
-   bytes already on IPFS are left pinned. Destroying the key is what actually
-   matters here: without it that ciphertext is permanently unrecoverable, so
-   this is a real deletion from the user's and the app's perspective, even
-   though the underlying blocks aren't explicitly unpinned (see secure-share/
-   key-wrap.js and crypto-utils.js — there is no "undo" once this runs). */
+   Removes the FileRecord row (and its encryption key) and unpins the CID
+   from this node and the whole cluster — see secure-share/index.js's
+   unpinCid(). Destroying the key alone already makes the ciphertext
+   permanently unrecoverable, but leaving it pinned forever was never
+   intentional, just unimplemented; actually dropping the pin matters for
+   backups (an old DB backup predating this delete could still have the key)
+   and for not silently growing cluster storage forever.
+   Two different FileRecords could in principle share a CID (same ciphertext
+   bytes uploaded twice) even though each upload uses a fresh random key, so
+   this checks for any other live reference before actually unpinning —
+   never unpin out from under a file that's still supposed to exist. */
 app.delete("/api/file/:id", auth, async (req, res) => {
   try {
     const file = await FileRecord.findOne({
@@ -769,6 +775,8 @@ app.delete("/api/file/:id", auth, async (req, res) => {
     if (!file) {
       return res.status(404).json({ message: "File not found" });
     }
+
+    const { cid } = file;
 
     await AccessLog.create({
       actorEmail: req.user.email || null,
@@ -780,6 +788,13 @@ app.delete("/api/file/:id", auth, async (req, res) => {
     });
 
     await file.destroy();
+
+    const stillReferenced = await FileRecord.count({ where: { cid } });
+    if (stillReferenced === 0) {
+      await unpinCid(cid);
+    } else {
+      console.log(`Skipping unpin for ${cid} — still referenced by ${stillReferenced} other FileRecord(s)`);
+    }
 
     res.json({ success: true });
   } catch (err) {

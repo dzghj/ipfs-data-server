@@ -40,6 +40,53 @@ async function clusterPin(cid) {
   }
 }
 
+// ── Cluster unpin helper ──────────────────────────────────────────────────────
+// Mirrors clusterPin — tells the cluster to drop this CID from every node's
+// pinset, not just the local one.
+async function clusterUnpin(cid) {
+  const clusterUrl = process.env.CLUSTER_API_URL;
+  const clusterUser = process.env.CLUSTER_API_USER || "admin";
+  const clusterPass = process.env.CLUSTER_API_PASSWORD || "";
+
+  if (!clusterUrl) {
+    console.warn("⚠️  CLUSTER_API_URL not set — skipping cluster unpin (single-node only)");
+    return;
+  }
+
+  try {
+    const credentials = Buffer.from(`${clusterUser}:${clusterPass}`).toString("base64");
+    const res = await fetch(`${clusterUrl}/pins/${cid}`, {
+      method: "DELETE",
+      headers: { Authorization: `Basic ${credentials}` },
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(`⚠️  Cluster unpin failed for ${cid}: ${res.status} ${body}`);
+    } else {
+      console.log(`✅ Cluster unpin queued for ${cid}`);
+    }
+  } catch (err) {
+    // Non-fatal — the DB row is gone either way, unpin is best-effort cleanup
+    console.error(`⚠️  Cluster unpin error for ${cid}:`, err.message);
+  }
+}
+
+/* ===== Unpin a CID — local + cluster-wide =====
+   Called after a FileRecord is deleted. The caller is responsible for first
+   checking that no OTHER live FileRecord still references this CID (content
+   with identical ciphertext bytes would share one) — this function always
+   unpins unconditionally once called. */
+export async function unpinCid(cid) {
+  try {
+    await ipfs.pin.rm(cid);
+  } catch (err) {
+    // Non-fatal — e.g. already unpinned, or this node never had it pinned
+    console.error(`⚠️  Local unpin error for ${cid}:`, err.message);
+  }
+  await clusterUnpin(cid);
+}
+
 /* ===== Shared: pin an already-encrypted buffer to IPFS + anchor its hash ===== */
 // `plaintextSha256` is the hash of the ORIGINAL bytes — used for the
 // OpenTimestamps anchor and stored as sha256Hash for secureView's integrity
