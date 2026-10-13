@@ -57,18 +57,33 @@ jobs:
           # adds a tiny throwaway blob instead, which is both allowed and a
           # more faithful check anyway: it exercises the exact write path
           # real uploads use, not just a bare liveness ping.
+          #
+          # --ipv4 + a 3-try retry loop: GitHub-hosted runners have
+          # occasionally failed to reach this Funnel hostname with a bare
+          # connection error (HTTP 000) while the same request succeeds
+          # immediately from every other network tested (the Mac Mini's own,
+          # and an unrelated outside network) — the same IPv6-routing failure
+          # mode seen with Render's Postgres host, not a real Mac Mini outage.
+          # One real attempt plus two retries tells the difference: a
+          # genuinely dead Mac Mini fails all three; a runner-side routing
+          # blip usually doesn't survive a 10s retry.
           echo "Checking ${IPFS_NODE_URL}/api/v0/add ..."
-          CODE=$(echo "cluster-health-check $(date -u +%s)" | curl -s --max-time 20 -o /tmp/id.json -w "%{http_code}" \
-            -X POST -H "X-Secret-Key: ${IPFS_SECRET}" \
-            -F "file=@-" \
-            "${IPFS_NODE_URL}/api/v0/add" || echo 000)
-          echo "HTTP ${CODE}"
+          CODE=000
+          for attempt in 1 2 3; do
+            CODE=$(echo "cluster-health-check $(date -u +%s)" | curl -s --ipv4 --max-time 20 -o /tmp/id.json -w "%{http_code}" \
+              -X POST -H "X-Secret-Key: ${IPFS_SECRET}" \
+              -F "file=@-" \
+              "${IPFS_NODE_URL}/api/v0/add" || echo 000)
+            echo "Attempt ${attempt}: HTTP ${CODE}"
+            [ "$CODE" = "200" ] && break
+            [ "$attempt" != "3" ] && sleep 10
+          done
           cat /tmp/id.json 2>/dev/null || true
           echo
 
           if [ "$CODE" != "200" ]; then
             echo "IPFS_STATUS=DOWN" >> "$GITHUB_ENV"
-            echo "::error::IPFS node unreachable (HTTP ${CODE}) — uploads and file views are down"
+            echo "::error::IPFS node unreachable (HTTP ${CODE}) after 3 attempts — uploads and file views are down"
           else
             CID=$(jq -r '.Hash // "unknown"' /tmp/id.json 2>/dev/null || echo unknown)
             echo "IPFS_STATUS=UP" >> "$GITHUB_ENV"
@@ -77,10 +92,16 @@ jobs:
 
       - name: Check cluster membership (both peers)
         run: |
-          CODE=$(curl -s --max-time 20 -o /tmp/peers.json -w "%{http_code}" \
-            -u "${CLUSTER_API_USER}:${CLUSTER_API_PASSWORD}" \
-            "${CLUSTER_API_URL}/peers" || echo 000)
-          echo "Cluster /peers → HTTP ${CODE}"
+          # Same --ipv4 + retry treatment as the IPFS check above, same reason.
+          CODE=000
+          for attempt in 1 2 3; do
+            CODE=$(curl -s --ipv4 --max-time 20 -o /tmp/peers.json -w "%{http_code}" \
+              -u "${CLUSTER_API_USER}:${CLUSTER_API_PASSWORD}" \
+              "${CLUSTER_API_URL}/peers" || echo 000)
+            echo "Cluster /peers attempt ${attempt}: HTTP ${CODE}"
+            [ "$CODE" = "200" ] && break
+            [ "$attempt" != "3" ] && sleep 10
+          done
 
           if [ "$CODE" != "200" ]; then
             echo "CLUSTER_STATUS=UNKNOWN" >> "$GITHUB_ENV"
