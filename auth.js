@@ -14,6 +14,7 @@ import {
   sendOtpToChannel,
   maskPhone,
   maskEmail,
+  EMAIL_FOOTER_HTML,
 } from "./otp.js";
 import { loginLimiter } from "./rateLimiters.js";
 
@@ -107,7 +108,7 @@ router.post("/register", async (req, res) => {
         from: process.env.RESEND_FROM_EMAIL,
         to: email,
         subject: "Verify your email & set password",
-        html: `<p>Set your password <a href="${verifyLink}">here</a></p>`,
+        html: `<p>Set your password <a href="${verifyLink}">here</a></p>${EMAIL_FOOTER_HTML}`,
       });
     } else {
       console.log("Skipping email send (RESEND_API_KEY not set). Verify link:", verifyLink);
@@ -206,7 +207,7 @@ router.post("/resend-verification", async (req, res) => {
         from: process.env.RESEND_FROM_EMAIL,
         to: email,
         subject: "Verify your email",
-        html: `<p>Set your password <a href="${verifyLink}">here</a></p>`,
+        html: `<p>Set your password <a href="${verifyLink}">here</a></p>${EMAIL_FOOTER_HTML}`,
       });
     } else {
       console.log("Skipping email send (RESEND_API_KEY not set). Verify link:", verifyLink);
@@ -452,7 +453,7 @@ router.post("/forgot-password", async (req, res) => {
         from: process.env.RESEND_FROM_EMAIL,
         to: email,
         subject: "Password Reset",
-        html: `<p>Reset <a href="${resetLink}">here</a></p>`,
+        html: `<p>Reset <a href="${resetLink}">here</a></p>${EMAIL_FOOTER_HTML}`,
       });
 
       if (emailResponse.error) {

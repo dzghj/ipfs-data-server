@@ -10,6 +10,12 @@ import { Resend } from "resend";
 export const OTP_TTL_MS = 2 * 60 * 1000; // 2 minutes, per the product requirement
 export const OTP_MAX_ATTEMPTS = 5;        // guards brute-forcing a 6-digit code in that window
 
+// Shared footer for every transactional email this app sends (verify,
+// reset, OTP) — identifies the legal operator behind the LegacyChain brand,
+// not just a bare message body. auth.js reuses this same constant.
+export const EMAIL_FOOTER_HTML =
+  `<p style="color:#888;font-size:12px;margin-top:24px;">Sent by SealKeep Technology Inc.</p>`;
+
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN;
 const TWILIO_FROM_NUMBER = process.env.TWILIO_FROM_NUMBER;
@@ -50,7 +56,7 @@ async function sendOtpEmail(email, code) {
     from: RESEND_FROM_EMAIL,
     to: email,
     subject: "Your LegacyChain verification code",
-    html: `<p>Your verification code is <strong>${code}</strong>. It expires in 2 minutes.</p>`,
+    html: `<p>Your verification code is <strong>${code}</strong>. It expires in 2 minutes.</p>${EMAIL_FOOTER_HTML}`,
   });
 }
 
