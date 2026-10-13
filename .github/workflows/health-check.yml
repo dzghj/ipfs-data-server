@@ -80,7 +80,7 @@ jobs:
             --user "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
             --data-urlencode "To=${ALERT_PHONE_NUMBER}" \
             --data-urlencode "From=${TWILIO_FROM_NUMBER}" \
-            --data-urlencode "Body=LegacyChain: backend/DB health check FAILED $(date -u '+%Y-%m-%d %H:%M UTC'). https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --data-urlencode "Body=ShadowVault: backend/DB health check FAILED $(date -u '+%Y-%m-%d %H:%M UTC'). https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Forward result to AI agent queue
         if: always()

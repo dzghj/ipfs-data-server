@@ -159,7 +159,7 @@ jobs:
             --user "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
             --data-urlencode "To=${ALERT_PHONE_NUMBER}" \
             --data-urlencode "From=${TWILIO_FROM_NUMBER}" \
-            --data-urlencode "Body=LegacyChain: IPFS node (Mac Mini) is DOWN $(date -u '+%Y-%m-%d %H:%M UTC') — uploads/views are affected. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --data-urlencode "Body=ShadowVault: IPFS node (Mac Mini) is DOWN $(date -u '+%Y-%m-%d %H:%M UTC') — uploads/views are affected. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Forward result to AI agent queue
         if: always()

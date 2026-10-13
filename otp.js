@@ -11,7 +11,7 @@ export const OTP_TTL_MS = 2 * 60 * 1000; // 2 minutes, per the product requireme
 export const OTP_MAX_ATTEMPTS = 5;        // guards brute-forcing a 6-digit code in that window
 
 // Shared footer for every transactional email this app sends (verify,
-// reset, OTP) — identifies the legal operator behind the LegacyChain brand,
+// reset, OTP) — identifies the legal operator behind the ShadowVault brand,
 // not just a bare message body. auth.js reuses this same constant.
 export const EMAIL_FOOTER_HTML =
   `<p style="color:#888;font-size:12px;margin-top:24px;">Sent by SealKeep Technology Inc.</p>`;
@@ -44,7 +44,7 @@ export function hashOtp(code) {
 async function sendOtpSms(phone, code) {
   if (!twilioClient) throw new Error("Twilio not configured");
   await twilioClient.messages.create({
-    body: `Your LegacyChain verification code is ${code}. It expires in 2 minutes.`,
+    body: `Your ShadowVault verification code is ${code}. It expires in 2 minutes.`,
     from: TWILIO_FROM_NUMBER,
     to: phone,
   });
@@ -55,7 +55,7 @@ async function sendOtpEmail(email, code) {
   await resend.emails.send({
     from: RESEND_FROM_EMAIL,
     to: email,
-    subject: "Your LegacyChain verification code",
+    subject: "Your ShadowVault verification code",
     html: `<p>Your verification code is <strong>${code}</strong>. It expires in 2 minutes.</p>${EMAIL_FOOTER_HTML}`,
   });
 }

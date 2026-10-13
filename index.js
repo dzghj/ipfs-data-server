@@ -1510,7 +1510,7 @@ app.post("/api/internal/run-resend-check", async (req, res) => {
           subject: `Reminder: You have vault access waiting (attempt ${record.sendCount + 1} of 3)`,
           html: `
             <p>Hi ${nominee.name},</p>
-            <p>This is a reminder that you have been granted access to a LegacyChain vault.</p>
+            <p>This is a reminder that you have been granted access to a ShadowVault vault.</p>
             <p>Click <a href="${link}">here</a> to view and download the shared files.</p>
             <p>This is reminder ${record.sendCount + 1} of 3. If you do not need this access, you can ignore this email.</p>
           `,

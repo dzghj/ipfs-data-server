@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-The Express/Postgres backend for LegacyChain, a blockchain-secured document vault: users upload files, they're encrypted and pinned to an IPFS cluster, and nominees can be granted access to a deceased/incapacitated user's files. See [README.md](./README.md) for the two documented endpoints (health probe, resend-check cron) and Render cron setup. This repo is deployed to Render (see `render.yaml`) and also drives several scheduled GitHub Actions workflows that monitor the IPFS cluster VMs and this backend itself.
+The Express/Postgres backend for ShadowVault, a blockchain-secured document vault: users upload files, they're encrypted and pinned to an IPFS cluster, and nominees can be granted access to a deceased/incapacitated user's files. See [README.md](./README.md) for the two documented endpoints (health probe, resend-check cron) and Render cron setup. This repo is deployed to Render (see `render.yaml`) and also drives several scheduled GitHub Actions workflows that monitor the IPFS cluster VMs and this backend itself.
 
 ## Commands
 
