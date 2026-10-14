@@ -27,6 +27,15 @@ CREATE TABLE IF NOT EXISTS public."Plan" (
   "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
+-- Defensive: if "Plan" already existed from an earlier dev sequelize.sync()
+-- run (so CREATE TABLE IF NOT EXISTS above was a no-op), its id column may
+-- have no auto-increment default at all, making the INSERT below fail with
+-- "null value in column id violates not-null constraint". This attaches one
+-- if missing — safe to run every boot, whether or not it was already there.
+CREATE SEQUENCE IF NOT EXISTS public."Plan_id_seq" OWNED BY public."Plan".id;
+SELECT setval('public."Plan_id_seq"', COALESCE((SELECT MAX(id) FROM public."Plan"), 0) + 1, false);
+ALTER TABLE public."Plan" ALTER COLUMN id SET DEFAULT nextval('public."Plan_id_seq"');
+
 INSERT INTO public."Plan" (name, "maxFiles", price) VALUES
   ('Normal', 5, 0),
   ('Middle', 10, 9.99),

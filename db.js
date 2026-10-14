@@ -347,6 +347,12 @@ const BOOTSTRAP_SQL = `
     "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
   );
+  -- Defensive: a pre-existing "Plan" table (e.g. from an earlier dev
+  -- sequelize.sync()) may have an id column with no auto-increment default,
+  -- which makes the INSERT below fail. Attaches one if missing.
+  CREATE SEQUENCE IF NOT EXISTS public."Plan_id_seq" OWNED BY public."Plan".id;
+  SELECT setval('public."Plan_id_seq"', COALESCE((SELECT MAX(id) FROM public."Plan"), 0) + 1, false);
+  ALTER TABLE public."Plan" ALTER COLUMN id SET DEFAULT nextval('public."Plan_id_seq"');
   INSERT INTO public."Plan" (name, "maxFiles", price) VALUES
     ('Normal', 5, 0),
     ('Middle', 10, 9.99),
