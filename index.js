@@ -46,7 +46,7 @@ const upload = multer({
 });
 
 /* ===== Plan tiers (per-folder file limits) =====
-   Normal/Middle/Super are seeded by migrations/011_plan_tiers.sql. "Super"'s
+   Basic/Plus/Premium are seeded by migrations/011_plan_tiers.sql. "Premium"'s
    maxFiles is a large sentinel (not a real cap) rather than NULL, so every
    comparison site can use one plain number check instead of null-handling
    throughout — UNLIMITED_FILES is how call sites recognize it for display
@@ -58,9 +58,9 @@ async function resolveUserPlan(user) {
     const plan = await Plan.findByPk(user.planId);
     if (plan) return { planName: plan.name, maxFilesPerFolder: plan.maxFiles };
   }
-  // No plan assigned yet (never upgraded) — matches the Normal tier's
+  // No plan assigned yet (never upgraded) — matches the Basic tier's
   // values, which are also User.maxFileNumber's column default.
-  return { planName: "Normal", maxFilesPerFolder: user.maxFileNumber ?? 5 };
+  return { planName: "Basic", maxFilesPerFolder: user.maxFileNumber ?? 5 };
 }
 
 /* ===== Routes ===== */

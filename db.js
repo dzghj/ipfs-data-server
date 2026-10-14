@@ -353,10 +353,17 @@ const BOOTSTRAP_SQL = `
   CREATE SEQUENCE IF NOT EXISTS public."Plan_id_seq" OWNED BY public."Plan".id;
   SELECT setval('public."Plan_id_seq"', COALESCE((SELECT MAX(id) FROM public."Plan"), 0) + 1, false);
   ALTER TABLE public."Plan" ALTER COLUMN id SET DEFAULT nextval('public."Plan_id_seq"');
+  -- Renamed in place (not deleted/recreated) so any User.planId already
+  -- pointing at these rows keeps working — Normal/Middle/Super read as
+  -- unprofessional, replaced with Basic/Plus/Premium. Safe to re-run: a
+  -- no-op once no row is named 'Normal'/'Middle'/'Super' anymore.
+  UPDATE public."Plan" SET name = 'Basic'   WHERE name = 'Normal';
+  UPDATE public."Plan" SET name = 'Plus'    WHERE name = 'Middle';
+  UPDATE public."Plan" SET name = 'Premium' WHERE name = 'Super';
   INSERT INTO public."Plan" (name, "maxFiles", price) VALUES
-    ('Normal', 5, 0),
-    ('Middle', 10, 9.99),
-    ('Super', 999999, 19.99)
+    ('Basic', 5, 0),
+    ('Plus', 10, 9.99),
+    ('Premium', 999999, 19.99)
   ON CONFLICT (name) DO NOTHING;
 `;
 
