@@ -52,12 +52,18 @@ async function sendOtpSms(phone, code) {
 
 async function sendOtpEmail(email, code) {
   if (!resend) throw new Error("Resend not configured");
-  await resend.emails.send({
+  // Resend returns { data, error } on failure rather than throwing — without
+  // this check, a failed send (bad API key, unverified sending domain, etc.)
+  // would look identical to a successful one to every caller, including
+  // sendOtpToChannel()'s "report failure back, don't silently swap channels"
+  // contract (see its own comment) — so this has to actually throw.
+  const result = await resend.emails.send({
     from: RESEND_FROM_EMAIL,
     to: email,
     subject: "Your ShadowVault verification code",
     html: `<p>Your verification code is <strong>${code}</strong>. It expires in 2 minutes.</p>${EMAIL_FOOTER_HTML}`,
   });
+  if (result.error) throw new Error(result.error.message || "Resend send failed");
 }
 
 /**

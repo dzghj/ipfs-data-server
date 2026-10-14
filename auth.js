@@ -104,12 +104,24 @@ router.post("/register", async (req, res) => {
     const verifyLink = `${clientUrl}/set-password/${verifyToken}`;
 
     if (resend) {
-      await resend.emails.send({
+      // Resend's SDK returns { data, error } on failure — it does not throw —
+      // so this must be checked explicitly, or a failed send (bad API key,
+      // unverified sending domain, etc.) silently reports success below
+      // while no email ever goes out.
+      const emailResponse = await resend.emails.send({
         from: process.env.RESEND_FROM_EMAIL,
         to: email,
         subject: "Verify your email & set password",
         html: `<p>Set your password <a href="${verifyLink}">here</a></p>${EMAIL_FOOTER_HTML}`,
       });
+
+      if (emailResponse.error) {
+        console.error("Registration email send failed:", emailResponse.error);
+        return res.status(500).json({
+          message: "Failed to send verification email",
+          error: emailResponse.error.message,
+        });
+      }
     } else {
       console.log("Skipping email send (RESEND_API_KEY not set). Verify link:", verifyLink);
     }
@@ -203,12 +215,22 @@ router.post("/resend-verification", async (req, res) => {
     const verifyLink = `${clientUrl}/set-password/${verifyToken}`;
 
     if (resend) {
-      await resend.emails.send({
+      // See /register's comment — Resend returns { data, error } on failure
+      // rather than throwing, so this must be checked explicitly.
+      const emailResponse = await resend.emails.send({
         from: process.env.RESEND_FROM_EMAIL,
         to: email,
         subject: "Verify your email",
         html: `<p>Set your password <a href="${verifyLink}">here</a></p>${EMAIL_FOOTER_HTML}`,
       });
+
+      if (emailResponse.error) {
+        console.error("Resend-verification email send failed:", emailResponse.error);
+        return res.status(500).json({
+          message: "Failed to send verification email",
+          error: emailResponse.error.message,
+        });
+      }
     } else {
       console.log("Skipping email send (RESEND_API_KEY not set). Verify link:", verifyLink);
     }

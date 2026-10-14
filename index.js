@@ -440,12 +440,18 @@ app.post("/api/internal/run-resend-check", async (req, res) => {
         const verifyLink = `${clientUrl}/set-password/${token}`;
 
         if (resendClient) {
-          await resendClient.emails.send({
+          // Resend returns { data, error } on failure rather than throwing —
+          // throw explicitly so this lands in the per-record catch below
+          // instead of silently marking a failed send as sent (sendCount/
+          // lastSentAt/token would advance past a reminder that never went
+          // out, and the real failure would never surface in `results`).
+          const emailResponse = await resendClient.emails.send({
             from: process.env.RESEND_FROM_EMAIL,
             to: nominee.email,
             subject: "Reminder: you were invited to be a nominee",
             html: `<p>This is a reminder. Set your password <a href="${verifyLink}">here</a></p>`,
           });
+          if (emailResponse.error) throw new Error(emailResponse.error.message || "Resend send failed");
         } else {
           console.log("(cron) Skipping resend — RESEND_API_KEY not set. Verify link:", verifyLink);
         }
@@ -1072,12 +1078,23 @@ app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
     const link = `${CLIENT_URL}/nominee-access?token=${token}`;
 
     if (resend) {
-      await resend.emails.send({
+      // Resend returns { data, error } on failure rather than throwing —
+      // check explicitly, or a failed send still falls through to
+      // NomineeAccessSend.create() below and records a "sent" entry for an
+      // email the nominee never received.
+      const emailResponse = await resend.emails.send({
         from: process.env.RESEND_FROM_EMAIL,
         to: nominee.email,
         subject: "Access to vault files",
         html: `<p>You were granted temporary access to files. Click <a href="${link}">here</a> to view and download.</p>`,
       });
+      if (emailResponse.error) {
+        console.error("Nominee access email send failed:", emailResponse.error);
+        return res.status(500).json({
+          message: "Failed to send access email",
+          error: emailResponse.error.message,
+        });
+      }
     } else {
       console.log("Nominee access link (no RESEND):", link);
     }
@@ -1552,19 +1569,31 @@ app.post("/api/internal/run-resend-check", async (req, res) => {
       );
       const link = `${CLIENT_URL}/nominee-access?token=${newToken}`;
 
-      // Send the email
+      // Send the email. Resend returns { data, error } on failure rather
+      // than throwing — checked explicitly and, on failure, this record is
+      // skipped (not marked sent) so the next cron run actually retries it,
+      // instead of silently burning through all 3 attempts on sends that
+      // never went out. One failure also must not abort the whole batch —
+      // this is per-record, unlike the route's single outer try/catch.
       if (resend) {
-        await resend.emails.send({
-          from: process.env.RESEND_FROM_EMAIL,
-          to: nominee.email,
-          subject: `Reminder: You have vault access waiting (attempt ${record.sendCount + 1} of 3)`,
-          html: `
-            <p>Hi ${nominee.name},</p>
-            <p>This is a reminder that you have been granted access to a ShadowVault vault.</p>
-            <p>Click <a href="${link}">here</a> to view and download the shared files.</p>
-            <p>This is reminder ${record.sendCount + 1} of 3. If you do not need this access, you can ignore this email.</p>
-          `,
-        });
+        try {
+          const emailResponse = await resend.emails.send({
+            from: process.env.RESEND_FROM_EMAIL,
+            to: nominee.email,
+            subject: `Reminder: You have vault access waiting (attempt ${record.sendCount + 1} of 3)`,
+            html: `
+              <p>Hi ${nominee.name},</p>
+              <p>This is a reminder that you have been granted access to a ShadowVault vault.</p>
+              <p>Click <a href="${link}">here</a> to view and download the shared files.</p>
+              <p>This is reminder ${record.sendCount + 1} of 3. If you do not need this access, you can ignore this email.</p>
+            `,
+          });
+          if (emailResponse.error) throw new Error(emailResponse.error.message || "Resend send failed");
+        } catch (sendErr) {
+          console.error(`[RESEND CHECK] Send failed for ${nominee.email}:`, sendErr.message);
+          results.push({ nomineeId: nominee.id, email: nominee.email, error: sendErr.message });
+          continue;
+        }
       } else {
         console.log(`[RESEND CHECK] No RESEND configured. Link for ${nominee.email}:`, link);
       }
