@@ -262,7 +262,7 @@ export const SupportMessage = sequelize.define(
 
 // sequelize.sync() is skipped in production, so tables added after the initial
 // deploy are created here instead. Idempotent (CREATE ... IF NOT EXISTS / ADD
-// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..010;
+// COLUMN IF NOT EXISTS) — safe to run on every boot. Mirrors migrations/001..011;
 // keep in sync with the FileRecord, NomineeAccessSend, AgentEvent, AgentHeartbeat and
 // SupportMessage models above.
 const BOOTSTRAP_SQL = `
@@ -334,6 +334,24 @@ const BOOTSTRAP_SQL = `
   ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "otpExpiry" BIGINT;
   ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "otpChannel" TEXT;
   ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "otpAttempts" INTEGER NOT NULL DEFAULT 0;
+
+  -- Plan was previously only ever created by sequelize.sync() (dev-only) —
+  -- meaning it likely doesn't exist at all in production. See
+  -- migrations/011_plan_tiers.sql for the full comment on the per-folder
+  -- file-limit tiers this backs.
+  CREATE TABLE IF NOT EXISTS public."Plan" (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    "maxFiles"  INTEGER NOT NULL,
+    price       DOUBLE PRECISION NOT NULL,
+    "createdAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+  );
+  INSERT INTO public."Plan" (name, "maxFiles", price) VALUES
+    ('Normal', 5, 0),
+    ('Middle', 10, 9.99),
+    ('Super', 999999, 19.99)
+  ON CONFLICT (name) DO NOTHING;
 `;
 
 /* ===== Init ===== */

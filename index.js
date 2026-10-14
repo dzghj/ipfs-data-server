@@ -45,6 +45,24 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 }
 });
 
+/* ===== Plan tiers (per-folder file limits) =====
+   Normal/Middle/Super are seeded by migrations/011_plan_tiers.sql. "Super"'s
+   maxFiles is a large sentinel (not a real cap) rather than NULL, so every
+   comparison site can use one plain number check instead of null-handling
+   throughout — UNLIMITED_FILES is how call sites recognize it for display
+   ("Unlimited" instead of the literal number). */
+const UNLIMITED_FILES = 999999;
+
+async function resolveUserPlan(user) {
+  if (user.planId) {
+    const plan = await Plan.findByPk(user.planId);
+    if (plan) return { planName: plan.name, maxFilesPerFolder: plan.maxFiles };
+  }
+  // No plan assigned yet (never upgraded) — matches the Normal tier's
+  // values, which are also User.maxFileNumber's column default.
+  return { planName: "Normal", maxFilesPerFolder: user.maxFileNumber ?? 5 };
+}
+
 /* ===== Routes ===== */
 app.use("/api/auth", authRoutes);
 
@@ -495,6 +513,23 @@ app.post("/api/upload", auth, uploadLimiter, upload.single("file"), async (req, 
 
     // Optional: sanitize filename
     const safeFilename = String(declaredName || "file").replace(/[^a-zA-Z0-9.\-_]/g, "_");
+    const category = req.body.category || "Personal";
+
+    // Per-folder file limit, gated by plan tier — checked before any
+    // encryption/IPFS work so a rejected upload fails fast.
+    const user = await User.findByPk(req.user.id);
+    const { planName, maxFilesPerFolder } = await resolveUserPlan(user);
+    if (maxFilesPerFolder < UNLIMITED_FILES) {
+      const existingInFolder = await FileRecord.count({ where: { userId: req.user.id, category } });
+      if (existingInFolder >= maxFilesPerFolder) {
+        return res.status(403).json({
+          message: `Your ${planName} plan allows up to ${maxFilesPerFolder} files in "${category}" — you've reached that limit. Upgrade your plan or choose a different folder.`,
+          planName,
+          maxFilesPerFolder,
+          category,
+        });
+      }
+    }
 
     const result = await secureUploadClientEncrypted({
       encryptedBuffer: req.file.buffer,
@@ -519,7 +554,7 @@ app.post("/api/upload", auth, uploadLimiter, upload.single("file"), async (req, 
       iv: result.iv, // hex string    
       authTag: result.authTag, // hex string   
       mimeType: declaredMime,
-      category: req.body.category || "Personal",
+      category,
       uploadedAt: new Date(),
     });
 
@@ -817,7 +852,22 @@ app.get("/api/myfiles", auth, async (req, res) => {
       attributes: ["id", "filename", "cid", "sha256Hash", "otsAnchoredAt", "otsUpgradedAt", "uploadedAt", "protectionOn", "keyHolderList", "category", "mimeType"]
     });
 
-    res.json({ success: true, files });
+    // Live plan lookup (not just whatever was cached in localStorage at
+    // login) — this is the one place the vault page always re-fetches on
+    // load, so it's the right spot to keep the displayed tier/limit honest
+    // after an upgrade.
+    const user = await User.findByPk(req.user.id);
+    const { planName, maxFilesPerFolder } = await resolveUserPlan(user);
+
+    res.json({
+      success: true,
+      files,
+      plan: {
+        name: planName,
+        maxFilesPerFolder,
+        unlimited: maxFilesPerFolder >= UNLIMITED_FILES,
+      },
+    });
   } catch (err) {
     console.error("Fetch files failed:", err);
     res.status(500).json({ message: "Failed to fetch files" });
