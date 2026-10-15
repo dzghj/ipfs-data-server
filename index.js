@@ -23,6 +23,41 @@ import crypto from "crypto";
 
 dotenv.config();
 
+// CLIENT_URL is baked into every verify/reset/nominee-access link this app
+// ever emails out. A real incident: it was once set to a specific Vercel
+// *preview* deployment URL (one with a per-build hash in the hostname, e.g.
+// secure-ipfs-frontend-<hash>-<team>.vercel.app) — those get garbage
+// collected per Vercel's retention policy, so every link silently went
+// dead once that one build was cleaned up, independent of the token's own
+// 24h expiry. This can't catch every bad value, but it catches the exact
+// class of mistake that already happened once: any raw PaaS-assigned
+// preview/deploy hostname, instead of a real stable domain.
+(function checkClientUrl() {
+  const raw = process.env.CLIENT_URL;
+  if (!raw) {
+    console.warn("⚠️  CLIENT_URL is not set — every verify/reset/nominee-access link will be malformed.");
+    return;
+  }
+  let host;
+  try {
+    host = new URL(raw).hostname;
+  } catch {
+    console.warn(`⚠️  CLIENT_URL is not a valid URL: "${raw}"`);
+    return;
+  }
+  const previewHostPatterns = [
+    /^[a-z0-9-]+-[a-z0-9]{8,}-[a-z0-9-]+\.vercel\.app$/i, // project-<hash>-team.vercel.app
+    /--[a-z0-9-]+\.netlify\.app$/i,                        // branch--site.netlify.app
+  ];
+  if (previewHostPatterns.some((re) => re.test(host))) {
+    console.warn(
+      `⚠️  CLIENT_URL ("${raw}") looks like a one-off preview deployment URL, not a stable domain — ` +
+      `this is exactly the mistake that previously made every emailed link go dead once that build was ` +
+      `garbage-collected. Point this at your real custom domain or a stable production alias instead.`
+    );
+  }
+})();
+
 const resendClient = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 const app = express();
