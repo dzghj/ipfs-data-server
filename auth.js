@@ -14,7 +14,7 @@ import {
   sendOtpToChannel,
   maskPhone,
   maskEmail,
-  EMAIL_FOOTER_HTML,
+  renderEmail,
 } from "./otp.js";
 import { loginLimiter } from "./rateLimiters.js";
 
@@ -112,7 +112,12 @@ router.post("/register", async (req, res) => {
         from: process.env.RESEND_FROM_EMAIL,
         to: email,
         subject: "Verify your email & set password",
-        html: `<p>Set your password <a href="${verifyLink}">here</a></p>${EMAIL_FOOTER_HTML}`,
+        html: renderEmail({
+          heading: "Welcome to ShadowVault",
+          bodyHtml:
+            "You're almost set. Confirm your email and choose a password to finish creating your vault. This link expires in 24 hours.",
+          button: { label: "Verify Email & Set Password", href: verifyLink },
+        }),
       });
 
       if (emailResponse.error) {
@@ -221,7 +226,12 @@ router.post("/resend-verification", async (req, res) => {
         from: process.env.RESEND_FROM_EMAIL,
         to: email,
         subject: "Verify your email",
-        html: `<p>Set your password <a href="${verifyLink}">here</a></p>${EMAIL_FOOTER_HTML}`,
+        html: renderEmail({
+          heading: "Confirm your email",
+          bodyHtml:
+            "Here's a fresh link to confirm your email and choose a password. This link expires in 24 hours.",
+          button: { label: "Verify Email & Set Password", href: verifyLink },
+        }),
       });
 
       if (emailResponse.error) {
@@ -475,7 +485,12 @@ router.post("/forgot-password", async (req, res) => {
         from: process.env.RESEND_FROM_EMAIL,
         to: email,
         subject: "Password Reset",
-        html: `<p>Reset <a href="${resetLink}">here</a></p>${EMAIL_FOOTER_HTML}`,
+        html: renderEmail({
+          heading: "Reset your password",
+          bodyHtml:
+            "We received a request to reset your password. If this wasn't you, you can safely ignore this email. This link expires in 15 minutes.",
+          button: { label: "Reset Password", href: resetLink },
+        }),
       });
 
       if (emailResponse.error) {

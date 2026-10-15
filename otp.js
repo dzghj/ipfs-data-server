@@ -10,11 +10,63 @@ import { Resend } from "resend";
 export const OTP_TTL_MS = 2 * 60 * 1000; // 2 minutes, per the product requirement
 export const OTP_MAX_ATTEMPTS = 5;        // guards brute-forcing a 6-digit code in that window
 
-// Shared footer for every transactional email this app sends (verify,
-// reset, OTP) — identifies the legal operator behind the ShadowVault brand,
-// not just a bare message body. auth.js reuses this same constant.
-export const EMAIL_FOOTER_HTML =
-  `<p style="color:#888;font-size:12px;margin-top:24px;">Sent by SealKeep Technology Inc.</p>`;
+// Shared HTML shell for every transactional email this app sends (verify,
+// reset, login OTP) — a branded card instead of a bare paragraph, using the
+// app's own color palette (primary teal, dark-bg/dark-card/dark-border) so
+// the email actually looks like it came from the product. Table-based
+// layout, all styles inline — the safe subset for Outlook's Word rendering
+// engine and Gmail's <style>-stripping, not just modern mail clients.
+//
+// One of `button` (a link/CTA, for verify + reset emails) or `code` (a
+// prominent OTP display, for login codes) is typically passed, not both —
+// but either, neither, or both render fine if given.
+export function renderEmail({ heading, bodyHtml, button, code }) {
+  const buttonHtml = button ? `
+    <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:28px auto 8px;">
+      <tr>
+        <td style="background-color:#17b99a;border-radius:8px;">
+          <a href="${button.href}" style="display:inline-block;padding:14px 32px;font-size:15px;font-weight:600;color:#0f2847;text-decoration:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            ${button.label}
+          </a>
+        </td>
+      </tr>
+    </table>
+    <p style="font-size:12px;color:#8ba3b5;text-align:center;margin:16px 0 0;word-break:break-all;">
+      Or paste this link into your browser:<br />
+      <a href="${button.href}" style="color:#17b99a;">${button.href}</a>
+    </p>` : "";
+
+  const codeHtml = code ? `
+    <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:28px auto;">
+      <tr>
+        <td style="background-color:#0f2847;border:2px solid #17b99a;border-radius:8px;padding:16px 28px;">
+          <span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#17b99a;font-family:'SF Mono',Consolas,Menlo,monospace;">
+            ${code}
+          </span>
+        </td>
+      </tr>
+    </table>` : "";
+
+  return `
+<div style="background-color:#0f2847;padding:40px 20px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background-color:#1a3f5c;border-radius:12px;overflow:hidden;">
+    <tr>
+      <td style="padding:28px 32px;text-align:center;border-bottom:1px solid #2a5f7f;">
+        <span style="font-size:20px;font-weight:700;color:#17b99a;">ShadowVault</span>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:32px;">
+        <h1 style="margin:0 0 16px;font-size:20px;font-weight:600;color:#ffffff;">${heading}</h1>
+        <div style="font-size:14px;line-height:1.6;color:#cbd5e1;">${bodyHtml}</div>
+        ${codeHtml}
+        ${buttonHtml}
+      </td>
+    </tr>
+  </table>
+  <p style="text-align:center;color:#6b8299;font-size:12px;margin:24px 0 0;">Sent by SealKeep Technology Inc.</p>
+</div>`;
+}
 
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
 const TWILIO_AUTH_TOKEN  = process.env.TWILIO_AUTH_TOKEN;
@@ -61,7 +113,11 @@ async function sendOtpEmail(email, code) {
     from: RESEND_FROM_EMAIL,
     to: email,
     subject: "Your ShadowVault verification code",
-    html: `<p>Your verification code is <strong>${code}</strong>. It expires in 2 minutes.</p>${EMAIL_FOOTER_HTML}`,
+    html: renderEmail({
+      heading: "Your verification code",
+      bodyHtml: "Enter this code to finish signing in. It expires in 2 minutes.",
+      code,
+    }),
   });
   if (result.error) throw new Error(result.error.message || "Resend send failed");
 }
