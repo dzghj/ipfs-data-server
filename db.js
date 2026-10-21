@@ -20,6 +20,11 @@ export const User = sequelize.define(
     email:          { type: DataTypes.STRING,  allowNull: false, unique: true },
     passwordHash:   { type: DataTypes.STRING,  allowNull: true },
 
+    // Gates /api/admin/* routes (auth.js's requireAdmin middleware). No UI
+    // to manage this yet — flip it directly in Postgres:
+    //   UPDATE "Users" SET "isAdmin" = true WHERE email = '...';
+    isAdmin: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+
     // Required at registration going forward (see auth.js's /register) — the
     // destination for login OTP codes (otp.js). Nullable because accounts
     // created before this existed have none; those fall back to email OTP.
@@ -377,6 +382,9 @@ const BOOTSTRAP_SQL = `
 
   -- Dead-man's-switch tracking — see migrations/012_switch_triggered_at.sql.
   ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "switchTriggeredAt" TIMESTAMP WITH TIME ZONE;
+
+  -- See migrations/013_users_is_admin.sql.
+  ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "isAdmin" BOOLEAN NOT NULL DEFAULT false;
 `;
 
 /* ===== Init ===== */

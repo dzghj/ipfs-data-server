@@ -4,7 +4,7 @@ import express from "express";
 import multer from "multer";
 import dotenv from "dotenv";
 
-import authRoutes, { auth } from "./auth.js";
+import authRoutes, { auth, requireAdmin } from "./auth.js";
 import jwt from "jsonwebtoken";
 import { Resend } from "resend";
 import { renderEmail } from "./otp.js";
@@ -1823,6 +1823,31 @@ app.post("/api/internal/run-checkin-check", async (req, res) => {
   } catch (err) {
     console.error("Checkin sweep failed:", err);
     res.status(500).json({ message: "Checkin sweep failed", error: err.message });
+  }
+});
+
+/* ===== Admin ===== */
+// Didn't exist at all before this — the frontend's /admin page was calling
+// this exact path already, 404ing silently with no feedback. isAdmin is
+// re-checked fresh per request by requireAdmin (auth.js), not trusted from
+// the JWT.
+app.get("/api/admin/files", auth, requireAdmin, async (req, res) => {
+  try {
+    const files = await FileRecord.findAll({
+      attributes: ["userId", "filename", "cid", "uploadedAt"],
+      order: [["userId", "ASC"], ["uploadedAt", "DESC"]],
+    });
+
+    const byUser = new Map();
+    for (const f of files) {
+      if (!byUser.has(f.userId)) byUser.set(f.userId, []);
+      byUser.get(f.userId).push({ fileName: f.filename, cid: f.cid, uploadedAt: f.uploadedAt });
+    }
+
+    res.json(Array.from(byUser, ([userId, files]) => ({ userId, files })));
+  } catch (err) {
+    console.error("Admin files fetch failed:", err);
+    res.status(500).json({ message: "Failed to fetch admin files" });
   }
 });
 

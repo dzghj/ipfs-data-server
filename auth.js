@@ -551,4 +551,19 @@ export function auth(req, res, next) {
   }
 }
 
+// Must run after auth(). Re-fetches isAdmin fresh from the DB rather than
+// trusting a JWT claim — the token itself only ever carries {id, email}
+// (see the login routes above), so there's nothing stale to worry about,
+// and a day-old token can't keep admin access for someone it was just
+// revoked from.
+export async function requireAdmin(req, res, next) {
+  try {
+    const user = await User.findByPk(req.user.id, { attributes: ["isAdmin"] });
+    if (!user?.isAdmin) return res.status(403).json({ message: "Admin access required" });
+    next();
+  } catch (err) {
+    res.status(500).json({ message: "Failed to verify admin access" });
+  }
+}
+
 export default router;
