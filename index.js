@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 import authRoutes, { auth } from "./auth.js";
 import jwt from "jsonwebtoken";
 import { Resend } from "resend";
+import { renderEmail } from "./otp.js";
 import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat, SupportMessage } from "./db.js";
 import { Op } from "sequelize";
 import { secureUploadClientEncrypted, secureView, unpinCid } from "./secure-share/index.js";
@@ -1120,8 +1121,17 @@ app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
       const emailResponse = await resend.emails.send({
         from: process.env.RESEND_FROM_EMAIL,
         to: nominee.email,
-        subject: "Access to vault files",
-        html: `<p>You were granted temporary access to files. Click <a href="${link}">here</a> to view and download.</p>`,
+        subject: "You've been granted vault access",
+        html: renderEmail({
+          heading: "You've been granted vault access",
+          bodyHtml: `
+            <p style="margin:0 0 12px;">Hi ${nominee.name || "there"},</p>
+            <p style="margin:0 0 12px;">${req.user.email} has designated you as a trusted nominee on ShadowVault and granted you access to
+            ${fileIds.length} file${fileIds.length === 1 ? "" : "s"} stored in their vault.</p>
+            <p style="margin:0;">Use the button below to view and download the shared files. This link is personal to you, time-limited, and should be treated like a password — don't forward it.</p>
+          `,
+          button: { label: "View Shared Files", href: link },
+        }),
       });
       if (emailResponse.error) {
         console.error("Nominee access email send failed:", emailResponse.error);
@@ -1615,13 +1625,16 @@ app.post("/api/internal/run-resend-check", async (req, res) => {
           const emailResponse = await resend.emails.send({
             from: process.env.RESEND_FROM_EMAIL,
             to: nominee.email,
-            subject: `Reminder: You have vault access waiting (attempt ${record.sendCount + 1} of 3)`,
-            html: `
-              <p>Hi ${nominee.name},</p>
-              <p>This is a reminder that you have been granted access to a ShadowVault vault.</p>
-              <p>Click <a href="${link}">here</a> to view and download the shared files.</p>
-              <p>This is reminder ${record.sendCount + 1} of 3. If you do not need this access, you can ignore this email.</p>
-            `,
+            subject: `Reminder: You have vault access waiting (${record.sendCount + 1} of 3)`,
+            html: renderEmail({
+              heading: "Your vault access is still waiting",
+              bodyHtml: `
+                <p style="margin:0 0 12px;">Hi ${nominee.name},</p>
+                <p style="margin:0 0 12px;">This is a reminder that you've been granted access to files in a ShadowVault vault, but the link hasn't been opened yet.</p>
+                <p style="margin:0;">This is reminder ${record.sendCount + 1} of 3. If you don't need this access, you can safely ignore this email.</p>
+              `,
+              button: { label: "View Shared Files", href: link },
+            }),
           });
           if (emailResponse.error) throw new Error(emailResponse.error.message || "Resend send failed");
         } catch (sendErr) {
