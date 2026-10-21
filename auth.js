@@ -16,7 +16,7 @@ import {
   maskEmail,
   renderEmail,
 } from "./otp.js";
-import { loginLimiter } from "./rateLimiters.js";
+import { loginLimiter, otpSendLimiter } from "./rateLimiters.js";
 
 const router = express.Router();
 const SECRET = process.env.JWT_SECRET || "supersecret";
@@ -332,7 +332,7 @@ router.post("/login", loginLimiter, async (req, res) => {
 // pendingToken — the frontend uses this both for the initial send and for
 // "resend"/"try a different method". Re-derives availableChannels itself
 // rather than trusting the client's choice blindly.
-router.post("/login/send-otp", async (req, res) => {
+router.post("/login/send-otp", otpSendLimiter, async (req, res) => {
   try {
     const { pendingToken, channel } = req.body;
     if (!pendingToken || !channel) {
@@ -434,6 +434,16 @@ router.post("/login/verify-otp", loginLimiter, async (req, res) => {
       user.lastLogin = previousLogin;
     }
     user.loginAt = new Date();
+
+    // Continuity check-in: per the product's own stated design
+    // (SwitchPage.jsx — "each successful login resets your check-in
+    // timer"), a real login is what proves the user is active, not just
+    // saving the interval setting. Also re-arms the dead-man's switch by
+    // clearing switchTriggeredAt, so a user who logs back in after being
+    // marked overdue stops the switch from staying tripped.
+    user.lastCheckinAt = new Date();
+    user.switchTriggeredAt = null;
+
     await user.save();
 
     const token = jwt.sign(

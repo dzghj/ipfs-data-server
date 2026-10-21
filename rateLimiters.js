@@ -15,6 +15,20 @@ export const loginLimiter = rateLimit({
   message: { message: "Too many login attempts. Please try again in 15 minutes." },
 });
 
+// Caps how often a code can be (re)sent during one login attempt. Without
+// this, anyone holding a pendingToken (needs only a correct password guess,
+// itself capped by loginLimiter) could call /login/send-otp in a loop and
+// SMS/email-bomb the real account holder at the app's Twilio/Resend expense.
+// Deliberately does NOT skipSuccessfulRequests like loginLimiter does — a
+// successful send is exactly the thing that needs capping here.
+export const otpSendLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many code requests. Please wait a few minutes before requesting another." },
+});
+
 // Upload throttle — not a brute-force concern like login, just anti-abuse
 // (scripted mass uploads). Generous enough not to interfere with normal
 // use: a real user uploading a batch of files should never hit this.

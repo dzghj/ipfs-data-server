@@ -59,9 +59,18 @@ export const User = sequelize.define(
     lastLogin: { type: DataTypes.DATE, allowNull: true },
     loginAt:   { type: DataTypes.DATE, allowNull: true },
 
-    // Check-in interval (days)
-    checkinInterval: { type: DataTypes.INTEGER, defaultValue: 90 },
-    lastCheckinAt:   { type: DataTypes.DATE, allowNull: true, defaultValue: Sequelize.NOW },
+    // Check-in interval (days). lastCheckinAt resets on every successful
+    // login (auth.js's /login/verify-otp) per the product's own stated
+    // design (SwitchPage.jsx: "Each successful login resets your check-in
+    // timer"). switchTriggeredAt is set by the checkin sweep
+    // (index.js's /api/internal/run-checkin-check) the first time it finds
+    // this user overdue, so the dead-man's switch fires exactly once per
+    // missed period instead of re-granting nominee access on every cron
+    // tick; it's cleared back to null on the user's next login, which is
+    // what lets the switch re-arm.
+    checkinInterval:   { type: DataTypes.INTEGER, defaultValue: 90 },
+    lastCheckinAt:     { type: DataTypes.DATE, allowNull: true, defaultValue: Sequelize.NOW },
+    switchTriggeredAt: { type: DataTypes.DATE, allowNull: true },
 
     createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
     updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: Sequelize.NOW },
@@ -365,6 +374,9 @@ const BOOTSTRAP_SQL = `
     ('Plus', 10, 9.99),
     ('Premium', 999999, 19.99)
   ON CONFLICT (name) DO NOTHING;
+
+  -- Dead-man's-switch tracking — see migrations/012_switch_triggered_at.sql.
+  ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "switchTriggeredAt" TIMESTAMP WITH TIME ZONE;
 `;
 
 /* ===== Init ===== */

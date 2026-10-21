@@ -57,3 +57,46 @@ services:
           envVarKey: INTERNAL_API_SECRET
       - key: CRON_TARGET_URL
         value: https://ipfs-data-server.onrender.com/api/internal/run-resend-check
+
+  # The actual dead-man's switch — checks every user's checkinInterval
+  # against lastCheckinAt and auto-grants nominee access once a user goes
+  # overdue. See index.js's /api/internal/run-checkin-check. Same
+  # cron-runner.js entrypoint as resend-cron, just a different target URL.
+  - type: cron
+    name: checkin-cron
+    env: node
+    plan: starter
+    schedule: "0 * * * *"
+    buildCommand: npm install
+    startCommand: npm run cron
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: INTERNAL_API_SECRET
+        fromService:
+          type: web
+          name: ipfs-data-server
+          envVarKey: INTERNAL_API_SECRET
+      - key: CRON_TARGET_URL
+        value: https://ipfs-data-server.onrender.com/api/internal/run-checkin-check
+
+  # Resends an unopened nominee vault-access link up to twice (own path —
+  # see index.js's comment on why this can't share run-resend-check's path
+  # with the unrelated invite-reminder cron above).
+  - type: cron
+    name: link-resend-cron
+    env: node
+    plan: starter
+    schedule: "0 * * * *"
+    buildCommand: npm install
+    startCommand: npm run cron
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: INTERNAL_API_SECRET
+        fromService:
+          type: web
+          name: ipfs-data-server
+          envVarKey: INTERNAL_API_SECRET
+      - key: CRON_TARGET_URL
+        value: https://ipfs-data-server.onrender.com/api/internal/run-link-resend-check

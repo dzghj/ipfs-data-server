@@ -8,6 +8,7 @@ import authRoutes, { auth } from "./auth.js";
 import jwt from "jsonwebtoken";
 import { Resend } from "resend";
 import { renderEmail } from "./otp.js";
+import { createOrder as createPaypalOrder, captureOrder as capturePaypalOrder } from "./paypal.js";
 import { sequelize, FileRecord, User, Plan, Nominee, Folder, AccessLog, NomineeAccessSend, AgentEvent, AgentHeartbeat, SupportMessage } from "./db.js";
 import { Op } from "sequelize";
 import { secureUploadClientEncrypted, secureView, unpinCid } from "./secure-share/index.js";
@@ -62,7 +63,22 @@ dotenv.config();
 const resendClient = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 const app = express();
-app.use(cors());
+
+// Explicit allowlist instead of cors()'s wide-open default (which reflects
+// any origin). Requests with no Origin header (server-to-server calls from
+// the Mac Mini agent, GitHub Actions, curl, Render's own cron) are left
+// alone — this only restricts browser-originated cross-site requests.
+const corsAllowlist = [process.env.CLIENT_URL, "http://localhost:3000"]
+  .filter(Boolean)
+  .map((u) => u.replace(/\/$/, ""));
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || corsAllowlist.includes(origin.replace(/\/$/, ""))) {
+      return callback(null, true);
+    }
+    callback(new Error("Not allowed by CORS"));
+  },
+}));
 app.use(bodyParser.json());
 
 // This is a pure JSON API with per-user authenticated data — nothing here
@@ -918,45 +934,103 @@ app.get("/api/myfiles", auth, async (req, res) => {
 /* ==============================
    SUBSCRIBE / UPGRADE PLAN
 ================================ */
-app.post("/api/upgrade/subscribe", auth,async (req, res) => {
+// Only ever grants a FREE plan directly — this used to grant any plan with
+// no payment collected at all (a real "POST any planId, get Premium for
+// free" exploit). Paid plans now have to go through the PayPal
+// create-order/capture-order pair below, which only grants a plan after
+// PayPal itself confirms a completed capture for it.
+app.post("/api/upgrade/subscribe", auth, async (req, res) => {
   try {
     const { planId } = req.body;
-
-    // Get user from token (assumes you already use auth middleware)
     const userId = req.user.id;
 
     if (!planId) {
       return res.status(400).json({ message: "Plan ID is required" });
     }
 
-    // Find selected plan
     const plan = await Plan.findOne({ where: { id: planId } });
-
     if (!plan) {
       return res.status(404).json({ message: "Plan not found" });
     }
 
-    /* =========================
-       STRIPE PAYMENT (LATER)
-    ========================= */
-    // TODO: integrate Stripe payment here
+    if (plan.price > 0) {
+      return res.status(400).json({
+        message: "This plan requires payment — use /api/upgrade/create-order to start checkout.",
+      });
+    }
 
-    /* =========================
-       UPDATE USER PLAN
-    ========================= */
     await User.update(
       { maxFileNumber: plan.maxFiles, planId: plan.id },
       { where: { id: userId } }
     );
-  
-    res.json({
-      success: true,
-      maxFiles: plan.maxFiles,
-    });
 
+    res.json({ success: true, maxFiles: plan.maxFiles });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Subscription failed" });
+  }
+});
+
+// Step 1 of paid checkout: create a PayPal order for the plan's real price
+// (server-decided, never trusts a client-supplied amount) and hand back
+// just the order id for the frontend's PayPal Buttons to approve.
+app.post("/api/upgrade/create-order", auth, async (req, res) => {
+  try {
+    const { planId } = req.body;
+    if (!planId) return res.status(400).json({ message: "Plan ID is required" });
+
+    const plan = await Plan.findOne({ where: { id: planId } });
+    if (!plan) return res.status(404).json({ message: "Plan not found" });
+    if (!(plan.price > 0)) {
+      return res.status(400).json({ message: "This plan doesn't require payment — use /api/upgrade/subscribe." });
+    }
+
+    const order = await createPaypalOrder({
+      amount: plan.price,
+      customId: `${req.user.id}:${plan.id}`,
+    });
+
+    res.json({ orderId: order.id });
+  } catch (err) {
+    console.error("PayPal create-order failed:", err);
+    res.status(500).json({ message: "Failed to start checkout", error: err.message });
+  }
+});
+
+// Step 2: the frontend calls this once the buyer approves the order in the
+// PayPal popup. custom_id is read back from PAYPAL'S OWN capture response,
+// not from anything the client sends here — that's what makes this safe
+// against a client claiming "I paid for Basic but want Premium" to apply.
+app.post("/api/upgrade/capture-order", auth, async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) return res.status(400).json({ message: "orderId is required" });
+
+    const capture = await capturePaypalOrder(orderId);
+    if (capture.status !== "COMPLETED") {
+      return res.status(402).json({ message: `Payment not completed (status: ${capture.status})` });
+    }
+
+    const customId = capture.purchase_units?.[0]?.payments?.captures?.[0]?.custom_id
+      || capture.purchase_units?.[0]?.custom_id;
+    const [customUserId, customPlanId] = String(customId || "").split(":");
+
+    if (Number(customUserId) !== req.user.id) {
+      return res.status(403).json({ message: "This order was not created by the current user" });
+    }
+
+    const plan = await Plan.findOne({ where: { id: Number(customPlanId) } });
+    if (!plan) return res.status(404).json({ message: "Plan not found" });
+
+    await User.update(
+      { maxFileNumber: plan.maxFiles, planId: plan.id },
+      { where: { id: req.user.id } }
+    );
+
+    res.json({ success: true, maxFiles: plan.maxFiles });
+  } catch (err) {
+    console.error("PayPal capture-order failed:", err);
+    res.status(500).json({ message: "Failed to complete checkout", error: err.message });
   }
 });
 
@@ -1089,8 +1163,65 @@ const SECRET = process.env.JWT_SECRET || "supersecret";
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 const CLIENT_URL = (process.env.CLIENT_URL || "").replace(/\/$/, "");
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET || "internal-dev-secret";
-// How many hours to wait before resending to an unopened link (configurable for testing)
-const RESEND_INTERVAL_HOURS = parseFloat(process.env.RESEND_INTERVAL_HOURS || "24");
+
+// Shared by the owner-initiated manual send route and the automatic
+// checkin-sweep trigger below — mints a fresh nominee-access token, emails
+// it, and records the send. Throws on a hard email failure (caller decides
+// how to handle that: the manual route surfaces it to the owner, the sweep
+// logs it and moves on to the next nominee rather than aborting the batch).
+async function grantNomineeAccess(owner, nominee, { expiresIn = "14d" } = {}) {
+  let files = [];
+  if (nominee.accessLevel === "full") {
+    files = await FileRecord.findAll({ where: { userId: owner.id }, attributes: ["id"] });
+  } else {
+    files = await FileRecord.findAll({ where: { userId: owner.id, category: nominee.allowedFolders }, attributes: ["id"] });
+  }
+
+  const fileIds = files.map(f => f.id);
+  const token = jwt.sign({ type: "nominee_access", ownerId: owner.id, nomineeId: nominee.id, fileIds }, SECRET, { expiresIn });
+  const link = `${CLIENT_URL}/nominee-access?token=${token}`;
+
+  if (resend) {
+    // Resend returns { data, error } on failure rather than throwing —
+    // check explicitly, or a failed send still falls through to
+    // NomineeAccessSend.create() below and records a "sent" entry for an
+    // email the nominee never received.
+    const emailResponse = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL,
+      to: nominee.email,
+      subject: "You've been granted vault access",
+      html: renderEmail({
+        heading: "You've been granted vault access",
+        bodyHtml: `
+          <p style="margin:0 0 12px;">Hi ${nominee.name || "there"},</p>
+          <p style="margin:0 0 12px;">${owner.email} has designated you as a trusted nominee on ShadowVault and granted you access to
+          ${fileIds.length} file${fileIds.length === 1 ? "" : "s"} stored in their vault.</p>
+          <p style="margin:0;">Use the button below to view and download the shared files. This link is personal to you, time-limited, and should be treated like a password — don't forward it.</p>
+        `,
+        button: { label: "View Shared Files", href: link },
+      }),
+    });
+    if (emailResponse.error) {
+      throw new Error(emailResponse.error.message || "Resend send failed");
+    }
+  } else {
+    console.log("Nominee access link (no RESEND):", link);
+  }
+
+  // Record this send so the resend scheduler can track it. The JWT itself
+  // is a usable bearer credential (jwt.verify() checks it by signature, not
+  // by DB lookup — nothing ever reads this column back to rebuild a link,
+  // every resend mints a fresh one), so only its hash is stored.
+  await NomineeAccessSend.create({
+    nomineeId:  nominee.id,
+    ownerId:    owner.id,
+    token:      sha256(token),
+    sendCount:  1,
+    lastSentAt: new Date(),
+  });
+
+  return { link };
+}
 
 // Owner triggers an access email to a nominee (protected)
 app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
@@ -1099,67 +1230,11 @@ app.post("/api/nominee-access/send/:nomineeId", auth, async (req, res) => {
     const nominee = await Nominee.findOne({ where: { id: nomineeId, userId: req.user.id } });
     if (!nominee) return res.status(404).json({ message: "Nominee not found" });
 
-    // gather allowed files
-    let files = [];
-    if (nominee.accessLevel === "full") {
-      files = await FileRecord.findAll({ where: { userId: req.user.id }, attributes: ["id"] });
-    } else {
-      files = await FileRecord.findAll({ where: { userId: req.user.id, category: nominee.allowedFolders }, attributes: ["id"] });
-    }
-
-    const fileIds = files.map(f => f.id);
-
-    const token = jwt.sign({ type: "nominee_access", ownerId: req.user.id, nomineeId: nominee.id, fileIds }, SECRET, { expiresIn: req.body.expiresIn || "14d" });
-
-    const link = `${CLIENT_URL}/nominee-access?token=${token}`;
-
-    if (resend) {
-      // Resend returns { data, error } on failure rather than throwing —
-      // check explicitly, or a failed send still falls through to
-      // NomineeAccessSend.create() below and records a "sent" entry for an
-      // email the nominee never received.
-      const emailResponse = await resend.emails.send({
-        from: process.env.RESEND_FROM_EMAIL,
-        to: nominee.email,
-        subject: "You've been granted vault access",
-        html: renderEmail({
-          heading: "You've been granted vault access",
-          bodyHtml: `
-            <p style="margin:0 0 12px;">Hi ${nominee.name || "there"},</p>
-            <p style="margin:0 0 12px;">${req.user.email} has designated you as a trusted nominee on ShadowVault and granted you access to
-            ${fileIds.length} file${fileIds.length === 1 ? "" : "s"} stored in their vault.</p>
-            <p style="margin:0;">Use the button below to view and download the shared files. This link is personal to you, time-limited, and should be treated like a password — don't forward it.</p>
-          `,
-          button: { label: "View Shared Files", href: link },
-        }),
-      });
-      if (emailResponse.error) {
-        console.error("Nominee access email send failed:", emailResponse.error);
-        return res.status(500).json({
-          message: "Failed to send access email",
-          error: emailResponse.error.message,
-        });
-      }
-    } else {
-      console.log("Nominee access link (no RESEND):", link);
-    }
-
-    // Record this send so the resend scheduler can track it. The JWT itself
-    // is a usable bearer credential (jwt.verify() checks it by signature, not
-    // by DB lookup — nothing ever reads this column back to rebuild a link,
-    // every resend mints a fresh one), so only its hash is stored.
-    await NomineeAccessSend.create({
-      nomineeId:  nominee.id,
-      ownerId:    req.user.id,
-      token:      sha256(token),
-      sendCount:  1,
-      lastSentAt: new Date(),
-    });
-
+    const { link } = await grantNomineeAccess(req.user, nominee, { expiresIn: req.body.expiresIn || "14d" });
     res.json({ success: true, link });
   } catch (err) {
     console.error("Send nominee access failed:", err);
-    res.status(500).json({ message: "Failed to send nominee access" });
+    res.status(500).json({ message: "Failed to send nominee access", error: err.message });
   }
 });
 
@@ -1212,18 +1287,24 @@ app.get("/api/nominee-access", async (req, res) => {
       }
     }
 
-    // fetch files
+    // The nominee row must still exist with the SAME userId the token was
+    // issued for — a 14-day-old token otherwise stays a usable credential
+    // even after the owner deletes that nominee entirely. accessLevel/
+    // allowedFolders are read fresh below too (not from the token's baked-in
+    // fileIds), so a downgrade from full to partial access — or removing a
+    // folder — takes effect on the nominee's very next request, not just on
+    // their next freshly-sent link.
+    const nominee = await Nominee.findOne({ where: { id: payload.nomineeId, userId: payload.ownerId } });
+    if (!nominee) return res.status(403).json({ message: "Access has been revoked" });
+
     let files = [];
-    if (Array.isArray(payload.fileIds) && payload.fileIds.length > 0) {
-      files = await FileRecord.findAll({ where: { id: payload.fileIds }, attributes: ["id", "filename", "cid", "mimeType", "uploadedAt"] });
+    if (nominee.accessLevel === "full") {
+      files = await FileRecord.findAll({ where: { userId: payload.ownerId }, attributes: ["id", "filename", "cid", "mimeType", "uploadedAt"] });
     } else {
-      // fallback: return no files
-      files = [];
+      files = await FileRecord.findAll({ where: { userId: payload.ownerId, category: nominee.allowedFolders }, attributes: ["id", "filename", "cid", "mimeType", "uploadedAt"] });
     }
 
-    const nominee = await Nominee.findOne({ where: { id: payload.nomineeId } });
-
-    await AccessLog.create({ actorEmail: nominee ? nominee.email : null, role: "nominee", action: "NOMINEE_LINK_REDEEM", fileId: null, ipAddress: req.ip, note: `Redeemed token for owner ${payload.ownerId}` });
+    await AccessLog.create({ actorEmail: nominee.email, role: "nominee", action: "NOMINEE_LINK_REDEEM", fileId: null, ipAddress: req.ip, note: `Redeemed token for owner ${payload.ownerId}` });
 
     // Mark the send record as opened
     await NomineeAccessSend.update(
@@ -1253,13 +1334,21 @@ app.get("/api/nominee-access/:fileId", async (req, res) => {
 
     if (payload.type !== "nominee_access") return res.status(400).json({ message: "Invalid token type" });
 
-    const fileId = parseInt(req.params.fileId, 10);
-    if (!Array.isArray(payload.fileIds) || !payload.fileIds.includes(fileId)) {
-      return res.status(403).json({ message: "Not authorized for this file" });
-    }
+    // Same live re-check as the list route above: the nominee row must
+    // still exist for this owner, and its CURRENT accessLevel/allowedFolders
+    // gate the file — not payload.fileIds, which is a snapshot frozen at
+    // the moment the link was issued and would otherwise keep authorizing a
+    // deleted or downgraded nominee for the token's full 14-day life.
+    const nominee = await Nominee.findOne({ where: { id: payload.nomineeId, userId: payload.ownerId } });
+    if (!nominee) return res.status(403).json({ message: "Access has been revoked" });
 
+    const fileId = parseInt(req.params.fileId, 10);
     const file = await FileRecord.findOne({ where: { id: fileId, userId: payload.ownerId } });
     if (!file) return res.status(404).json({ message: "File not found" });
+
+    if (nominee.accessLevel !== "full" && !nominee.allowedFolders?.includes(file.category)) {
+      return res.status(403).json({ message: "Not authorized for this file" });
+    }
 
     // Prevent access if owner logged back in after token issuance
     const owner = await User.findOne({ where: { id: payload.ownerId } });
@@ -1283,8 +1372,7 @@ app.get("/api/nominee-access/:fileId", async (req, res) => {
 
     const decryptedBuffer = decrypt(encryptedBuffer, key, iv, authTag);
 
-    const nominee = await Nominee.findOne({ where: { id: payload.nomineeId } });
-    await AccessLog.create({ actorEmail: nominee ? nominee.email : null, role: "nominee", action: "DOWNLOAD_FILE", fileId: file.id, ipAddress: req.ip, note: null });
+    await AccessLog.create({ actorEmail: nominee.email, role: "nominee", action: "DOWNLOAD_FILE", fileId: file.id, ipAddress: req.ip, note: null });
 
     res.setHeader("Content-Type", file.mimeType || "application/octet-stream");
     res.setHeader("Content-Disposition", `attachment; filename="${file.filename}"`);
@@ -1569,20 +1657,28 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-/* ===== Internal: Nominee Resend Check (called by external scheduler) =====
-   Protected by x-internal-secret header.
+/* ===== Internal: Unopened Link Resend Check (called by external scheduler) =====
+   Protected by x-internal-secret header. Own path, deliberately distinct
+   from /api/internal/run-resend-check above (that one handles unverified-
+   registration invite reminders — a different NomineeAccessSend use of the
+   same table; the two used to collide on the same path, which silently
+   made this logic dead code since Express only ever dispatches to the
+   first-registered handler for a given path).
    Finds all NomineeAccessSend records where:
      - openedAt is null (nominee never opened the link)
      - sendCount < 3 (haven't already resent twice)
      - lastSentAt was more than RESEND_INTERVAL_HOURS ago
-   Then resends the email and increments sendCount.
+   Then resends the email and increments sendCount. Covers links sent both
+   by the owner's manual "send access" button and by the checkin sweep
+   below.
 ================================================================= */
-app.post("/api/internal/run-resend-check", async (req, res) => {
+app.post("/api/internal/run-link-resend-check", async (req, res) => {
   const internalSecret = process.env.INTERNAL_API_SECRET;
   if (!isAuthorizedInternalRequest(req, internalSecret)) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
+  const RESEND_INTERVAL_HOURS = parseFloat(process.env.RESEND_INTERVAL_HOURS || "24");
   const cutoff = new Date(Date.now() - RESEND_INTERVAL_HOURS * 60 * 60 * 1000);
 
   try {
@@ -1638,12 +1734,12 @@ app.post("/api/internal/run-resend-check", async (req, res) => {
           });
           if (emailResponse.error) throw new Error(emailResponse.error.message || "Resend send failed");
         } catch (sendErr) {
-          console.error(`[RESEND CHECK] Send failed for ${nominee.email}:`, sendErr.message);
+          console.error(`[LINK RESEND CHECK] Send failed for ${nominee.email}:`, sendErr.message);
           results.push({ nomineeId: nominee.id, email: nominee.email, error: sendErr.message });
           continue;
         }
       } else {
-        console.log(`[RESEND CHECK] No RESEND configured. Link for ${nominee.email}:`, link);
+        console.log(`[LINK RESEND CHECK] No RESEND configured. Link for ${nominee.email}:`, link);
       }
 
       // Update the record (hash only — see the create() site above)
@@ -1660,11 +1756,73 @@ app.post("/api/internal/run-resend-check", async (req, res) => {
       });
     }
 
-    console.log(`[RESEND CHECK] Processed ${results.length} resend(s) at ${new Date().toISOString()}`);
+    console.log(`[LINK RESEND CHECK] Processed ${results.length} resend(s) at ${new Date().toISOString()}`);
     res.json({ success: true, resent: results.length, details: results });
   } catch (err) {
-    console.error("Resend check failed:", err);
-    res.status(500).json({ message: "Resend check failed", error: err.message });
+    console.error("Link resend check failed:", err);
+    res.status(500).json({ message: "Link resend check failed", error: err.message });
+  }
+});
+
+/* ===== Internal: Continuity Check-In Sweep (called by external scheduler) =====
+   This is the actual dead-man's switch — previously nothing anywhere ever
+   compared checkinInterval/lastCheckinAt to "now", so nominee access only
+   ever happened via the owner's manual "send access" button. This finds
+   every user who is overdue (now - lastCheckinAt > checkinInterval days)
+   and hasn't already been triggered for the current overdue period
+   (switchTriggeredAt is null), auto-grants their nominees access via the
+   same grantNomineeAccess() the manual route uses, then sets
+   switchTriggeredAt so it fires exactly once per missed period instead of
+   re-sending on every run. A user re-arms the switch simply by logging in
+   again (auth.js clears switchTriggeredAt there).
+================================================================= */
+app.post("/api/internal/run-checkin-check", async (req, res) => {
+  const internalSecret = process.env.INTERNAL_API_SECRET;
+  if (!isAuthorizedInternalRequest(req, internalSecret)) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const candidates = await User.findAll({ where: { switchTriggeredAt: null } });
+
+    const overdue = candidates.filter((user) => {
+      if (!user.lastCheckinAt) return false;
+      const intervalMs = (user.checkinInterval || 90) * 24 * 60 * 60 * 1000;
+      return Date.now() - new Date(user.lastCheckinAt).getTime() > intervalMs;
+    });
+
+    const results = [];
+
+    for (const user of overdue) {
+      const nominees = await Nominee.findAll({ where: { userId: user.id } });
+
+      let notified = 0;
+      for (const nominee of nominees) {
+        try {
+          await grantNomineeAccess(user, nominee);
+          notified++;
+        } catch (err) {
+          // One nominee's email failing (bad address, Resend hiccup)
+          // shouldn't stop the rest of this user's nominees, or the rest
+          // of the overdue batch — this is the only time a real missed
+          // check-in grants access, so it needs to keep trying everyone.
+          console.error(`[CHECKIN SWEEP] Failed to notify nominee ${nominee.id} for user ${user.id}:`, err.message);
+        }
+      }
+
+      // Mark triggered even if there were zero nominees or every send
+      // failed — this prevents retrying the same user every single run;
+      // the existing resend-check cron already handles re-sending
+      // individual unopened links once a grant has gone out.
+      await user.update({ switchTriggeredAt: new Date() });
+      results.push({ userId: user.id, nomineesTotal: nominees.length, nomineesNotified: notified });
+    }
+
+    console.log(`[CHECKIN SWEEP] ${overdue.length} user(s) newly overdue at ${new Date().toISOString()}`);
+    res.json({ success: true, usersTriggered: overdue.length, details: results });
+  } catch (err) {
+    console.error("Checkin sweep failed:", err);
+    res.status(500).json({ message: "Checkin sweep failed", error: err.message });
   }
 });
 
