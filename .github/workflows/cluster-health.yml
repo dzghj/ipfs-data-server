@@ -8,7 +8,7 @@ name: IPFS Cluster Health Check
 #
 # IPFS itself is checked via the SAME path secure-share/ipfs-client.js
 # actually uses in production: Tailscale Funnel
-# (https://davids-mac-mini.taile2344b.ts.net) fronting a small local proxy
+# (https://davids-mac-mini-5.taile2344b.ts.net) fronting a small local proxy
 # (legacychain-ipfs-proxy.js, lives on the Mac Mini, not in this repo) that
 # routes /ipfs/* to Kubo's API (:5001) and /cluster/* to the Cluster REST
 # API (:9094). NOT ipfs-AI-control's older ngrok tunnel
@@ -42,8 +42,8 @@ jobs:
     name: Check the IPFS cluster (Mac Mini + follower)
     runs-on: ubuntu-latest
     env:
-      IPFS_NODE_URL: ${{ vars.IPFS_NODE_URL || 'https://davids-mac-mini.taile2344b.ts.net/ipfs' }}
-      CLUSTER_API_URL: ${{ vars.CLUSTER_API_URL || 'https://davids-mac-mini.taile2344b.ts.net/cluster' }}
+      IPFS_NODE_URL: ${{ vars.IPFS_NODE_URL || 'https://davids-mac-mini-5.taile2344b.ts.net/ipfs' }}
+      CLUSTER_API_URL: ${{ vars.CLUSTER_API_URL || 'https://davids-mac-mini-5.taile2344b.ts.net/cluster' }}
       IPFS_SECRET: ${{ secrets.IPFS_SECRET }}
       CLUSTER_API_USER: ${{ secrets.CLUSTER_API_USER }}
       CLUSTER_API_PASSWORD: ${{ secrets.CLUSTER_API_PASSWORD }}

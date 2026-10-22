@@ -5,7 +5,7 @@ services:
   # creation, so Dockerfile/docker-entrypoint.sh/tailscale-forward.mjs below
   # are currently unused leftovers from an abandoned Tailscale-in-container
   # approach. Reaching the Mac Mini instead goes through Tailscale Funnel: a
-  # public HTTPS URL (davids-mac-mini.taile2344b.ts.net) proxied by
+  # public HTTPS URL (davids-mac-mini-5.taile2344b.ts.net) proxied by
   # legacychain-ipfs-proxy.js (runs directly on the Mac Mini, not in this
   # repo) which routes /ipfs/* -> Kubo's API (:5001) and /cluster/* -> the
   # Cluster REST API (:9094), since Funnel only exposes one port.
@@ -19,7 +19,7 @@ services:
       - key: INTERNAL_API_SECRET
         generateValue: true
       - key: IPFS_HOST
-        value: davids-mac-mini.taile2344b.ts.net
+        value: davids-mac-mini-5.taile2344b.ts.net
       - key: IPFS_PROTOCOL
         value: https
       # ipfs-http-client defaults to "api/v0" off the bare host, which misses
@@ -34,7 +34,7 @@ services:
       # committed here — see CLUSTER_API_USER's matching entry in the Mac
       # Mini's ~/.ipfs-cluster/service.json (api.restapi.basic_auth_credentials).
       - key: CLUSTER_API_URL
-        value: https://davids-mac-mini.taile2344b.ts.net/cluster
+        value: https://davids-mac-mini-5.taile2344b.ts.net/cluster
       - key: CLUSTER_API_USER
         value: render-backend
       - key: CLUSTER_API_PASSWORD
