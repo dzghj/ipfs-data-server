@@ -108,11 +108,14 @@ const UNLIMITED_FILES = 999999;
 async function resolveUserPlan(user) {
   if (user.planId) {
     const plan = await Plan.findByPk(user.planId);
-    if (plan) return { planName: plan.name, maxFilesPerFolder: plan.maxFiles };
+    if (plan) return { planName: plan.name, maxFilesPerFolder: plan.maxFiles, noPlanSelected: false };
   }
-  // No plan assigned yet (never upgraded) — matches the Basic tier's
-  // values, which are also User.maxFileNumber's column default.
-  return { planName: "Basic", maxFilesPerFolder: user.maxFileNumber ?? 5 };
+  // No plan assigned (new signup, or planId points at a since-removed row)
+  // — there is no free tier any more, so this must NOT silently grant
+  // Basic-equivalent access the way it used to. maxFilesPerFolder: 0 means
+  // "blocked", not "very small plan"; callers check noPlanSelected rather
+  // than inferring it from the number.
+  return { planName: null, maxFilesPerFolder: 0, noPlanSelected: true };
 }
 
 /* ===== Routes ===== */
@@ -576,7 +579,13 @@ app.post("/api/upload", auth, uploadLimiter, upload.single("file"), async (req, 
     // Per-folder file limit, gated by plan tier — checked before any
     // encryption/IPFS work so a rejected upload fails fast.
     const user = await User.findByPk(req.user.id);
-    const { planName, maxFilesPerFolder } = await resolveUserPlan(user);
+    const { planName, maxFilesPerFolder, noPlanSelected } = await resolveUserPlan(user);
+    if (noPlanSelected) {
+      return res.status(402).json({
+        message: "Select and pay for a plan before uploading files.",
+        noPlanSelected: true,
+      });
+    }
     if (maxFilesPerFolder < UNLIMITED_FILES) {
       const existingInFolder = await FileRecord.count({ where: { userId: req.user.id, category } });
       if (existingInFolder >= maxFilesPerFolder) {
@@ -915,7 +924,7 @@ app.get("/api/myfiles", auth, async (req, res) => {
     // load, so it's the right spot to keep the displayed tier/limit honest
     // after an upgrade.
     const user = await User.findByPk(req.user.id);
-    const { planName, maxFilesPerFolder } = await resolveUserPlan(user);
+    const { planName, maxFilesPerFolder, noPlanSelected } = await resolveUserPlan(user);
 
     res.json({
       success: true,
@@ -924,6 +933,7 @@ app.get("/api/myfiles", auth, async (req, res) => {
         name: planName,
         maxFilesPerFolder,
         unlimited: maxFilesPerFolder >= UNLIMITED_FILES,
+        noPlanSelected,
       },
     });
   } catch (err) {
