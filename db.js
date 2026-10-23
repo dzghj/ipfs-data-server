@@ -385,6 +385,35 @@ const BOOTSTRAP_SQL = `
 
   -- See migrations/013_users_is_admin.sql.
   ALTER TABLE public."Users" ADD COLUMN IF NOT EXISTS "isAdmin" BOOLEAN NOT NULL DEFAULT false;
+
+  -- Clean up a pre-existing "Free/Pro/Business/Enterprise" tier set (March
+  -- 2026) that the Basic/Plus/Premium migration above never actually
+  -- touched — its rename-in-place UPDATEs matched 'Normal'/'Middle'/'Super'
+  -- rows, not these, so both sets ended up coexisting and /api/upgrade/
+  -- options returned all 7 rows to the UI. Re-point any user still on one
+  -- of the old rows to Basic FIRST (there is no DB-level foreign key here,
+  -- just a plain planId integer, so this must happen before the DELETE
+  -- below or those users would keep a dangling reference), using a name
+  -- lookup rather than a hardcoded id so this is safe to re-run. All three
+  -- steps are no-ops once the old rows are gone.
+  UPDATE public."Users" SET "planId" = (SELECT id FROM public."Plan" WHERE name = 'Basic')
+    WHERE "planId" IN (SELECT id FROM public."Plan" WHERE name IN ('Free', 'Pro', 'Business', 'Enterprise'));
+  DELETE FROM public."Plan" WHERE name IN ('Free', 'Pro', 'Business', 'Enterprise');
+
+  -- Repriced per request: Basic/Plus/Premium $0/$9.99/$19.99 -> $50/$100/$200.
+  UPDATE public."Plan" SET price = 50  WHERE name = 'Basic';
+  UPDATE public."Plan" SET price = 100 WHERE name = 'Plus';
+  UPDATE public."Plan" SET price = 200 WHERE name = 'Premium';
+
+  -- Users.planId defaulted to 1 (the now-deleted old "Free" row's id),
+  -- which is how every new signup silently got a free plan with no
+  -- payment step. Dropping the default means new rows get NULL instead -
+  -- resolveUserPlan() in index.js already falls back to Basic-equivalent
+  -- limits for a NULL planId today, so this alone does not yet enforce
+  -- "must pay at signup"; it only stops new users from silently landing on
+  -- a plan row that no longer exists. Enforcing an actual payment-before-
+  -- use gate is a separate change (see conversation) - not done here.
+  ALTER TABLE public."Users" ALTER COLUMN "planId" DROP DEFAULT;
 `;
 
 /* ===== Init ===== */
